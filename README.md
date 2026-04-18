@@ -100,7 +100,7 @@ Everything runs on Cloudflare's free tier. No credit card required.
 
 ## Project status
 
-Current milestone: **M6 (disconnect handling)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
+Current milestone: **M7 (leaderboard + polish)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
 
 **Done:**
 - M0 · scaffold · Vite+React frontend and Cloudflare Worker both deployed with end-to-end health check.
@@ -109,6 +109,7 @@ Current milestone: **M6 (disconnect handling)** — next. See [`PLAN.md` §7](./
 - M3 · live cursor sync · auto-start with 2s buffer via DO alarm, progress broadcast on every keystroke, opponent cursor rendered in pink on the shared passage, live opponent WPM displayed.
 - M4 · countdown + winner · animated 3-2-1-GO countdown, time-mode timer enforced via DO alarm, server-computed winner (first finisher in finish mode / higher WPM in time mode), role-aware EndScreen with win/lose/tie banner and side-by-side stats.
 - M5 · WPM graph + rematch · Recharts line chart of both players' WPM over the race window, server-driven rematch flow (both click rematch → picks a new passage, clears race state, restarts countdown), keydown-capture-level preventDefault so Space doesn't scroll during the countdown.
+- M6 · disconnect handling · per-room sessionStorage tokens so reloads keep their role, single-alarm scheduler handling countdown/race-end/grace/expiry, 30s grace on mid-race drop with server-side forfeit if the rival never comes back, automatic 10-minute room expiry after both players leave, client auto-reconnect with exponential backoff (500ms → 5s) preserving the last-seen room state during the retry.
 
 ## License
 

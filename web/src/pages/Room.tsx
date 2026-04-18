@@ -37,11 +37,13 @@ export function Room() {
     );
   }
 
-  if (connectionState === "connecting") {
+  // Initial connect with no state yet: show "connecting..." (but once we've
+  // ever received a state snapshot, we keep rendering it through reconnects).
+  if (connectionState === "connecting" && !roomState) {
     return <StatusScreen title="connecting..." />;
   }
 
-  if (connectionState !== "open" || !roomState) {
+  if (connectionState === "closed" && !roomState) {
     return (
       <StatusScreen
         title="connection lost"
@@ -51,20 +53,80 @@ export function Room() {
     );
   }
 
-  if (roomState.status === "waiting") {
-    return <WaitingLobby roomId={roomId} />;
+  if (!roomState) {
+    return <StatusScreen title="connecting..." />;
   }
 
+  const reconnecting = connectionState === "reconnecting";
+  const disconnectedRival =
+    roomState.disconnected && roomState.disconnected.role !== role
+      ? roomState.disconnected
+      : null;
+
   return (
-    <RaceView
-      key={roomState.passage.id}
-      room={roomState}
-      role={role}
-      opponentProgress={opponentProgress}
-      opponentFinish={opponentFinish}
-      send={send}
-      onNewRace={() => setLocation("/")}
-    />
+    <div className="flex flex-col items-center gap-6 w-full">
+      <Banners
+        reconnecting={reconnecting}
+        disconnectedRival={disconnectedRival}
+      />
+      {roomState.status === "waiting" ? (
+        <WaitingLobby roomId={roomId} />
+      ) : (
+        <RaceView
+          key={roomState.passage.id}
+          room={roomState}
+          role={role}
+          opponentProgress={opponentProgress}
+          opponentFinish={opponentFinish}
+          send={send}
+          onNewRace={() => setLocation("/")}
+        />
+      )}
+    </div>
+  );
+}
+
+function Banners({
+  reconnecting,
+  disconnectedRival,
+}: {
+  reconnecting: boolean;
+  disconnectedRival: { graceUntil: number } | null;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!disconnectedRival) return;
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [disconnectedRival]);
+
+  if (!reconnecting && !disconnectedRival) return null;
+
+  return (
+    <div className="w-full max-w-[800px] flex flex-col gap-2">
+      {reconnecting && (
+        <div className="flex items-center justify-center gap-2 px-4 py-2 text-xs bg-bg-soft border border-border">
+          <span className="inline-block size-1.5 rounded-full bg-accent animate-pulse" />
+          <span className="text-fg-dim">
+            reconnecting to the room...
+          </span>
+        </div>
+      )}
+      {disconnectedRival && (
+        <div className="flex items-center justify-center gap-2 px-4 py-2 text-xs bg-bg-soft border border-opponent/40">
+          <span className="inline-block size-1.5 rounded-full bg-opponent animate-pulse" />
+          <span className="text-opponent">rival disconnected</span>
+          <span className="text-fg-dim">
+            ·{" "}
+            {Math.max(
+              0,
+              Math.ceil((disconnectedRival.graceUntil - now) / 1000)
+            )}
+            s grace
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
