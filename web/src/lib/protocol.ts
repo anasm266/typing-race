@@ -23,6 +23,7 @@ export interface PassageInfo {
 
 export type RoomStatus =
   | "waiting"
+  | "ready_check"
   | "starting"
   | "racing"
   | "ended";
@@ -78,7 +79,12 @@ export interface PublicRoomState {
   status: RoomStatus;
   playerCount: number;
   createdAt: number;
-  /** ms timestamp when racing begins (server clock). Set when 2nd player joins. */
+  /**
+   * While status === "ready_check", the ms timestamp at which the race
+   * auto-starts if the guest hasn't clicked lock-in yet.
+   */
+  readyCheckUntil?: number;
+  /** ms timestamp when racing begins (server clock). Set after ready_check resolves. */
   startAt?: number;
   /** ms timestamp when race ends in time-mode (startAt + timeLimit*1000). */
   endAt?: number;
@@ -99,6 +105,7 @@ export interface PublicRoomState {
 export type ClientMsg =
   | { t: "hello" }
   | { t: "ping" }
+  | { t: "lock_in" }
   | {
       t: "progress";
       pos: number;
@@ -150,6 +157,13 @@ export const DEFAULT_CONFIG: RoomConfig = {
 
 /** Pre-race buffer (3-2-1 countdown). */
 export const START_BUFFER_MS = 3000;
+
+/**
+ * After the guest joins, how long they have to click lock-in before the
+ * race auto-starts anyway (safety net so a forgotten tab doesn't hang
+ * the host forever).
+ */
+export const READY_CHECK_MS = 15_000;
 
 /** Grace period when a player drops mid-race before they forfeit. */
 export const DISCONNECT_GRACE_MS = 30_000;

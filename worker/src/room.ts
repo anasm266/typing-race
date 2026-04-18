@@ -14,6 +14,7 @@ import type {
 import {
   DISCONNECT_GRACE_MS,
   FINISH_GRACE_MS,
+  READY_CHECK_MS,
   ROOM_EXPIRY_MS,
   START_BUFFER_MS,
 } from "./protocol";
@@ -208,16 +209,19 @@ export class Room extends DurableObject<Env> {
       _expiresAt: undefined,
     };
 
-    // If this is the second player joining a waiting room, kick off
-    // the countdown. Otherwise leave status alone.
+    // If this is the second player joining a waiting room, enter
+    // ready_check: host is considered ready (they shared the link);
+    // guest must click lock-in or the race auto-starts after
+    // READY_CHECK_MS. Keeps the "sharing IS the race" pitch while
+    // still giving the joiner a moment to brace.
     if (
       this.state.playerCount === 2 &&
       this.state.status === "waiting"
     ) {
       this.state = {
         ...this.state,
-        status: "starting",
-        startAt: Date.now() + START_BUFFER_MS,
+        status: "ready_check",
+        readyCheckUntil: Date.now() + READY_CHECK_MS,
       };
     }
 
@@ -317,6 +321,16 @@ export class Room extends DurableObject<Env> {
           this.safeSend(ws, { t: "state", room: toPublic(this.state) });
         }
         return;
+
+      case "lock_in": {
+        // Only the guest needs to lock in (host is pre-ready). Accept
+        // the signal from either role though — if the host somehow
+        // clicks it (shouldn't happen, UI only shows for guest), we
+        // still let it advance the state.
+        if (this.state?.status !== "ready_check") return;
+        await this.beginCountdown();
+        return;
+      }
 
       case "progress": {
         if (this.state?.status !== "racing") return;
@@ -503,7 +517,11 @@ export class Room extends DurableObject<Env> {
 
     // Rollback a pre-race lobby to waiting.
     let nextStatus: PublicRoomState["status"] = this.state.status;
-    if (remaining < 2 && this.state.status === "starting") {
+    if (
+      remaining < 2 &&
+      (this.state.status === "starting" ||
+        this.state.status === "ready_check")
+    ) {
       nextStatus = "waiting";
     }
 
@@ -537,6 +555,10 @@ export class Room extends DurableObject<Env> {
       status: nextStatus,
       startAt:
         nextStatus === "waiting" ? undefined : this.state.startAt,
+      readyCheckUntil:
+        nextStatus === "waiting"
+          ? undefined
+          : this.state.readyCheckUntil,
       rematchReady,
       disconnected,
       _expiresAt: expiresAt,
@@ -568,6 +590,9 @@ export class Room extends DurableObject<Env> {
     const s = this.state;
     const candidates: number[] = [];
 
+    if (s.status === "ready_check" && s.readyCheckUntil) {
+      candidates.push(s.readyCheckUntil);
+    }
     if (s.status === "starting" && s.startAt) {
       candidates.push(s.startAt);
     }
@@ -606,6 +631,16 @@ export class Room extends DurableObject<Env> {
     ) {
       this.state = null;
       await this.ctx.storage.deleteAll();
+      return;
+    }
+
+    // Ready-check deadline elapsed → start the countdown anyway.
+    if (
+      this.state.status === "ready_check" &&
+      this.state.readyCheckUntil &&
+      now >= this.state.readyCheckUntil
+    ) {
+      await this.beginCountdown();
       return;
     }
 
@@ -734,6 +769,21 @@ export class Room extends DurableObject<Env> {
         result.guest.finishedPassage ? 1 : 0
       )
       .run();
+  }
+
+  /** Transition from ready_check into the 3-2-1 starting countdown. */
+  private async beginCountdown(): Promise<void> {
+    if (!this.state) return;
+    if (this.state.status !== "ready_check") return;
+    this.state = {
+      ...this.state,
+      status: "starting",
+      startAt: Date.now() + START_BUFFER_MS,
+      readyCheckUntil: undefined,
+    };
+    await this.persistState();
+    await this.rescheduleAlarm();
+    this.broadcast({ t: "state", room: toPublic(this.state) });
   }
 
   private async startRematch(): Promise<void> {
