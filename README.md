@@ -11,7 +11,7 @@ Open a room, send it to a friend, and race immediately. No accounts, no lobby br
 - Analytics API: [typing-race-api.kingzcopz266.workers.dev/analytics](https://typing-race-api.kingzcopz266.workers.dev/analytics)
 - Public status page: [typing-race.betteruptime.com](https://typing-race.betteruptime.com)
 
-<!-- Add demo GIF here after recording. See `docs/demo-gif.md`. -->
+<!-- Add demo GIF here after recording. -->
 
 ## What it does
 
@@ -28,7 +28,7 @@ Open a room, send it to a friend, and race immediately. No accounts, no lobby br
 
 ## Why this project exists
 
-Most student typing games stop at a local timer and some text highlighting. This one focuses on the harder engineering problems that make a multiplayer product feel real:
+Many typing games stop at a local timer and basic text highlighting. This one focuses on the harder engineering problems that make a multiplayer product feel real:
 
 - low-latency local input with server-synced race state
 - room lifecycle management and expiry
