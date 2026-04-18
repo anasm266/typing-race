@@ -22,6 +22,7 @@ export interface UseTypingResult {
   wpm: number;
   wpmSamples: WpmSample[];
   handleKey: (key: string) => void;
+  deleteWord: () => void;
   reset: () => void;
 }
 
@@ -111,6 +112,25 @@ export function useTyping(
     [startedAt, endedAt, passage]
   );
 
+  /**
+   * Ctrl+Backspace / Alt+Backspace semantics: wipe back to the start of
+   * the current word. If we're already on a whitespace run, skip that
+   * first, then keep deleting non-whitespace. Matches how every text
+   * input on the planet handles the shortcut.
+   */
+  const deleteWord = useCallback(() => {
+    if (endedAt !== null) return;
+    setTyped((t) => {
+      if (t.length === 0) return t;
+      let i = t.length;
+      // Skip trailing whitespace
+      while (i > 0 && /\s/.test(t[i - 1])) i--;
+      // Delete non-whitespace run
+      while (i > 0 && !/\s/.test(t[i - 1])) i--;
+      return t.slice(0, i);
+    });
+  }, [endedAt]);
+
   const reset = useCallback(() => {
     setTyped("");
     setStartedAt(startAtOverride ?? null);
@@ -143,6 +163,7 @@ export function useTyping(
     wpm,
     wpmSamples: samples,
     handleKey,
+    deleteWord,
     reset,
   };
 }
