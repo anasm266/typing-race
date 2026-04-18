@@ -154,8 +154,6 @@ Or with Docker:
 docker run --rm -i grafana/k6 run - < load-tests/ws-rooms.js
 ```
 
-Planned final README polish: add a screenshot of a real k6 run summary near this section.
-
 ## Observability
 
 - Sentry captures frontend errors plus Worker and Durable Object exceptions
@@ -178,14 +176,6 @@ Completed:
 - public recent-races page
 - observability and k6 test coverage
 - reaction bar polish
-
-Remaining polish before wider sharing:
-
-- accessibility sweep
-- mobile refinement pass
-- demo GIF for the top of this README
-- captured k6 results screenshot
-- final Sentry smoke-test pass
 
 ## Open source
 
