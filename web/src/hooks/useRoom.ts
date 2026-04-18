@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { roomWsUrl } from "../lib/api";
 import type {
   ClientMsg,
+  PlayerRole,
   PublicRoomState,
   ServerMsg,
 } from "../lib/protocol";
@@ -16,6 +17,7 @@ export interface OpponentProgress {
   pos: number;
   correctCount: number;
   wpm: number;
+  accuracy: number;
 }
 
 export interface OpponentFinish {
@@ -28,6 +30,7 @@ export interface UseRoomResult {
   roomState: PublicRoomState | null;
   connectionState: ConnectionState;
   error: string | null;
+  role: PlayerRole | null;
   opponentProgress: OpponentProgress | null;
   opponentFinish: OpponentFinish | null;
   send: (msg: ClientMsg) => void;
@@ -40,6 +43,7 @@ export function useRoom(roomId: string): UseRoomResult {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [role, setRole] = useState<PlayerRole | null>(null);
   const [opponentProgress, setOpponentProgress] =
     useState<OpponentProgress | null>(null);
   const [opponentFinish, setOpponentFinish] =
@@ -50,6 +54,7 @@ export function useRoom(roomId: string): UseRoomResult {
     setConnectionState("connecting");
     setError(null);
     setRoomState(null);
+    setRole(null);
     setOpponentProgress(null);
     setOpponentFinish(null);
 
@@ -70,6 +75,9 @@ export function useRoom(roomId: string): UseRoomResult {
       }
 
       switch (msg.t) {
+        case "welcome":
+          setRole(msg.role);
+          return;
         case "state":
           setRoomState(msg.room);
           if (msg.room.status === "starting" || msg.room.status === "waiting") {
@@ -85,6 +93,7 @@ export function useRoom(roomId: string): UseRoomResult {
             pos: msg.pos,
             correctCount: msg.correctCount,
             wpm: msg.wpm,
+            accuracy: msg.accuracy,
           });
           return;
         case "opponent_finished":
@@ -133,6 +142,7 @@ export function useRoom(roomId: string): UseRoomResult {
     roomState,
     connectionState,
     error,
+    role,
     opponentProgress,
     opponentFinish,
     send,
