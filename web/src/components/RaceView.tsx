@@ -260,10 +260,10 @@ function FinishGraceBanner({
       <span className="text-sm">
         {iFinishedFirst ? (
           <>
-            <span className="text-accent">you finished first</span>
+            <span className="text-accent">you finished</span>
             <span className="text-fg-dim">
               {" "}
-              · waiting for rival to complete
+              · waiting for rival so the result can be scored
             </span>
           </>
         ) : (
@@ -271,7 +271,7 @@ function FinishGraceBanner({
             <span className="text-opponent">rival finished</span>
             <span className="text-fg-dim">
               {" "}
-              · finish your passage to see full results
+              · finish strong before the result locks in
             </span>
           </>
         )}

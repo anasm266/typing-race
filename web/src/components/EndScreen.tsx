@@ -99,6 +99,7 @@ export function EndScreen({
   const clippedTheirs = opponentSamples.filter(
     (s) => s.t <= raceDurationSec
   );
+  const showFinishScore = result.endReason === "finish";
 
   return (
     <div className="flex flex-col items-center gap-10 w-full max-w-[760px]">
@@ -109,6 +110,7 @@ export function EndScreen({
           label="you"
           color="accent"
           result={me}
+          showFinishScore={showFinishScore}
           align="right"
         />
         <div className="h-24 w-px bg-border" aria-hidden />
@@ -116,6 +118,7 @@ export function EndScreen({
           label="rival"
           color="opponent"
           result={them}
+          showFinishScore={showFinishScore}
           align="left"
         />
       </div>
@@ -259,7 +262,7 @@ function interpretOutcome(
 
 function reasonLabel(result: RaceResult): string {
   if (result.endReason === "finish") {
-    return "finish mode · first to complete wins";
+    return "finish mode · final score balances speed and accuracy";
   }
   return "time mode · higher wpm wins";
 }
@@ -302,6 +305,7 @@ interface ResultColumnProps {
   label: string;
   color: "accent" | "opponent";
   result: PlayerResult;
+  showFinishScore: boolean;
   align: "left" | "right";
 }
 
@@ -309,6 +313,7 @@ function ResultColumn({
   label,
   color,
   result,
+  showFinishScore,
   align,
 }: ResultColumnProps) {
   const textColor = color === "accent" ? "text-accent" : "text-opponent";
@@ -337,6 +342,12 @@ function ResultColumn({
       </div>
 
       <div className="flex flex-col gap-1 text-sm">
+        {showFinishScore && (
+          <Stat
+            label="score"
+            value={formatScore(finishModeScore(result))}
+          />
+        )}
         <Stat label="accuracy" value={`${result.accuracy}%`} />
         <Stat label="time" value={formatElapsed(result.elapsedMs)} />
         <Stat
@@ -357,4 +368,13 @@ function Stat({ label, value }: { label: string; value: string }) {
       <span className="tabular-nums text-fg">{value}</span>
     </div>
   );
+}
+
+function finishModeScore(result: PlayerResult): number {
+  const accuracyWeight = result.accuracy / 100;
+  return result.wpm * accuracyWeight * accuracyWeight;
+}
+
+function formatScore(score: number): string {
+  return score.toFixed(1);
 }
