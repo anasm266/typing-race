@@ -52,6 +52,52 @@ body {
   }
 }
 
+@keyframes countdownPop {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  25% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.countdown-number {
+  display: inline-block;
+  animation: countdownPop 1s ease-out forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes countdownGo {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  30% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.countdown-go {
+  display: inline-block;
+  animation: countdownGo 500ms cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+  will-change: transform, opacity;
+}
+
 .passage-char {
   position: relative;
 }

@@ -1,8 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
 import type {
   ClientMsg,
+  EndReason,
   PassageInfo,
+  PlayerResult,
+  PlayerRole,
   PublicRoomState,
+  RaceOutcome,
+  RaceResult,
   RoomConfig,
   ServerMsg,
 } from "./protocol";
@@ -13,19 +18,55 @@ interface Env {
 }
 
 interface Attachment {
-  role: "host" | "guest";
+  role: PlayerRole;
   joinedAt: number;
 }
 
+interface PlayerProgress {
+  pos: number;
+  correctCount: number;
+  wpm: number;
+  accuracy: number;
+  /** ms timestamp of last update (server clock). */
+  at: number;
+}
+
+/**
+ * Internal state persisted in DO storage.
+ * Public fields are sent to clients; private (leading _) are server-only.
+ */
+interface InternalState extends PublicRoomState {
+  _hostProgress?: PlayerProgress;
+  _guestProgress?: PlayerProgress;
+  /** ms timestamp the host sent their "finished" msg (whole passage typed). */
+  _hostFinishedAt?: number;
+  _guestFinishedAt?: number;
+}
+
+function toPublic(s: InternalState): PublicRoomState {
+  const {
+    _hostProgress,
+    _guestProgress,
+    _hostFinishedAt,
+    _guestFinishedAt,
+    ...pub
+  } = s;
+  return pub;
+}
+
+function zeroProgress(): PlayerProgress {
+  return { pos: 0, correctCount: 0, wpm: 0, accuracy: 100, at: 0 };
+}
+
 export class Room extends DurableObject<Env> {
-  private roomState: PublicRoomState | null = null;
+  private state: InternalState | null = null;
   private ready = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      this.roomState =
-        (await ctx.storage.get<PublicRoomState>("state")) ?? null;
+      this.state =
+        (await ctx.storage.get<InternalState>("state")) ?? null;
       this.ready = true;
     });
   }
@@ -34,22 +75,19 @@ export class Room extends DurableObject<Env> {
     if (!this.ready) {
       await this.ctx.blockConcurrencyWhile(async () => {});
     }
-
     const url = new URL(request.url);
 
     if (url.pathname === "/__init" && request.method === "POST") {
       return this.handleInit(request);
     }
-
     if (url.pathname === "/__ws") {
       return this.handleUpgrade(request);
     }
-
     return new Response("not found", { status: 404 });
   }
 
   private async handleInit(request: Request): Promise<Response> {
-    if (this.roomState) {
+    if (this.state) {
       return new Response("already initialized", { status: 409 });
     }
     const body = await request.json<{
@@ -58,7 +96,7 @@ export class Room extends DurableObject<Env> {
       config: RoomConfig;
     }>();
 
-    this.roomState = {
+    this.state = {
       roomId: body.roomId,
       passage: body.passage,
       config: body.config,
@@ -79,7 +117,7 @@ export class Room extends DurableObject<Env> {
     const client = pair[0];
     const server = pair[1];
 
-    if (!this.roomState) {
+    if (!this.state) {
       server.accept();
       this.safeSend(server, {
         t: "error",
@@ -102,7 +140,7 @@ export class Room extends DurableObject<Env> {
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    const role: Attachment["role"] =
+    const role: PlayerRole =
       existing.length === 0 ? "host" : "guest";
     server.serializeAttachment({
       role,
@@ -112,15 +150,12 @@ export class Room extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
 
     const newCount = existing.length + 1;
-    this.roomState = {
-      ...this.roomState,
-      playerCount: newCount,
-    };
+    this.state = { ...this.state, playerCount: newCount };
 
-    if (newCount === 2 && this.roomState.status === "waiting") {
+    if (newCount === 2 && this.state.status === "waiting") {
       const startAt = Date.now() + START_BUFFER_MS;
-      this.roomState = {
-        ...this.roomState,
+      this.state = {
+        ...this.state,
         status: "starting",
         startAt,
       };
@@ -129,27 +164,53 @@ export class Room extends DurableObject<Env> {
 
     await this.persistState();
 
-    this.safeSend(server, { t: "state", room: this.roomState });
+    this.safeSend(server, { t: "welcome", role });
+    this.safeSend(server, { t: "state", room: toPublic(this.state) });
 
     for (const other of existing) {
       this.safeSend(other, {
         t: "peer_joined",
         playerCount: newCount,
       });
-      this.safeSend(other, { t: "state", room: this.roomState });
+      this.safeSend(other, { t: "state", room: toPublic(this.state) });
     }
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /** Fires when the pre-race buffer elapses: transition to racing. */
+  /** Alarm handler: either transition starting→racing, or end a time-mode race. */
   async alarm(): Promise<void> {
-    if (!this.roomState) return;
-    if (this.roomState.status !== "starting") return;
+    if (!this.state) return;
 
-    this.roomState = { ...this.roomState, status: "racing" };
-    await this.persistState();
-    this.broadcast({ t: "state", room: this.roomState });
+    if (this.state.status === "starting") {
+      // Pre-race buffer elapsed — start the race.
+      const next: InternalState = {
+        ...this.state,
+        status: "racing",
+        _hostProgress: undefined,
+        _guestProgress: undefined,
+        _hostFinishedAt: undefined,
+        _guestFinishedAt: undefined,
+      };
+      if (this.state.config.endMode === "time") {
+        next.endAt =
+          (this.state.startAt ?? Date.now()) +
+          this.state.config.timeLimit * 1000;
+        await this.ctx.storage.setAlarm(next.endAt);
+      }
+      this.state = next;
+      await this.persistState();
+      this.broadcast({ t: "state", room: toPublic(this.state) });
+      return;
+    }
+
+    if (
+      this.state.status === "racing" &&
+      this.state.config.endMode === "time"
+    ) {
+      await this.endRace("time_up");
+      return;
+    }
   }
 
   async webSocketMessage(
@@ -171,30 +232,80 @@ export class Room extends DurableObject<Env> {
         return;
 
       case "hello":
-        if (this.roomState) {
-          this.safeSend(ws, { t: "state", room: this.roomState });
+        if (this.state) {
+          this.safeSend(ws, { t: "state", room: toPublic(this.state) });
         }
         return;
 
-      case "progress":
-        if (this.roomState?.status !== "racing") return;
+      case "progress": {
+        if (this.state?.status !== "racing") return;
+        const att = ws.deserializeAttachment() as Attachment | null;
+        if (!att) return;
+        const progress: PlayerProgress = {
+          pos: msg.pos,
+          correctCount: msg.correctCount,
+          wpm: msg.wpm,
+          accuracy: msg.accuracy,
+          at: Date.now(),
+        };
+        if (att.role === "host") {
+          this.state = { ...this.state, _hostProgress: progress };
+        } else {
+          this.state = { ...this.state, _guestProgress: progress };
+        }
+        await this.persistState();
+
         this.broadcastExcept(ws, {
           t: "opponent_progress",
           pos: msg.pos,
           correctCount: msg.correctCount,
           wpm: msg.wpm,
+          accuracy: msg.accuracy,
         });
         return;
+      }
 
-      case "finished":
-        if (this.roomState?.status !== "racing") return;
+      case "finished": {
+        if (this.state?.status !== "racing") return;
+        const att = ws.deserializeAttachment() as Attachment | null;
+        if (!att) return;
+
+        // Upsert final stats into progress (most accurate snapshot).
+        const finalProgress: PlayerProgress = {
+          pos: this.state.passage.text.length,
+          correctCount: this.state.passage.text.length,
+          wpm: msg.wpm,
+          accuracy: msg.accuracy,
+          at: Date.now(),
+        };
+        if (att.role === "host") {
+          this.state = {
+            ...this.state,
+            _hostProgress: finalProgress,
+            _hostFinishedAt: Date.now(),
+          };
+        } else {
+          this.state = {
+            ...this.state,
+            _guestProgress: finalProgress,
+            _guestFinishedAt: Date.now(),
+          };
+        }
+        await this.persistState();
+
         this.broadcastExcept(ws, {
           t: "opponent_finished",
           wpm: msg.wpm,
           accuracy: msg.accuracy,
           elapsedMs: msg.elapsedMs,
         });
+
+        // In finish-mode, first finisher wins and race ends immediately.
+        if (this.state.config.endMode === "finish") {
+          await this.endRace("finish");
+        }
         return;
+      }
     }
   }
 
@@ -205,7 +316,7 @@ export class Room extends DurableObject<Env> {
     wasClean: boolean
   ): Promise<void> {
     console.log(
-      `[room ${this.roomState?.roomId}] close: code=${code} reason=${reason} clean=${wasClean}`
+      `[room ${this.state?.roomId}] close: code=${code} reason=${reason} clean=${wasClean}`
     );
     try {
       ws.close();
@@ -217,28 +328,33 @@ export class Room extends DurableObject<Env> {
 
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
     console.log(
-      `[room ${this.roomState?.roomId}] ws error: ${String(error)}`
+      `[room ${this.state?.roomId}] ws error: ${String(error)}`
     );
     await this.handleDisconnect(ws);
   }
 
   private async handleDisconnect(closing: WebSocket): Promise<void> {
-    if (!this.roomState) return;
+    if (!this.state) return;
     const remaining = this.ctx
       .getWebSockets()
       .filter((s) => s !== closing).length;
 
     const nextStatus: PublicRoomState["status"] =
-      remaining < 2 && this.roomState.status === "starting"
+      remaining < 2 && this.state.status === "starting"
         ? "waiting"
-        : this.roomState.status;
+        : this.state.status;
 
-    this.roomState = {
-      ...this.roomState,
+    this.state = {
+      ...this.state,
       playerCount: remaining,
       status: nextStatus,
-      startAt: nextStatus === "waiting" ? undefined : this.roomState.startAt,
+      startAt:
+        nextStatus === "waiting" ? undefined : this.state.startAt,
     };
+    // If we rolled back to waiting, cancel the countdown alarm.
+    if (nextStatus === "waiting") {
+      await this.ctx.storage.deleteAlarm();
+    }
     await this.persistState();
 
     for (const other of this.ctx.getWebSockets()) {
@@ -247,8 +363,20 @@ export class Room extends DurableObject<Env> {
         t: "peer_left",
         playerCount: remaining,
       });
-      this.safeSend(other, { t: "state", room: this.roomState });
+      this.safeSend(other, { t: "state", room: toPublic(this.state) });
     }
+  }
+
+  private async endRace(reason: EndReason): Promise<void> {
+    if (!this.state) return;
+    if (this.state.status === "ended") return;
+
+    const result = computeResult(this.state, reason);
+    this.state = { ...this.state, status: "ended", result };
+    await this.ctx.storage.deleteAlarm();
+    await this.persistState();
+
+    this.broadcast({ t: "state", room: toPublic(this.state) });
   }
 
   private broadcast(msg: ServerMsg): void {
@@ -265,8 +393,8 @@ export class Room extends DurableObject<Env> {
   }
 
   private async persistState(): Promise<void> {
-    if (!this.roomState) return;
-    await this.ctx.storage.put("state", this.roomState);
+    if (!this.state) return;
+    await this.ctx.storage.put("state", this.state);
   }
 
   private safeSend(ws: WebSocket, msg: ServerMsg): void {
@@ -276,4 +404,63 @@ export class Room extends DurableObject<Env> {
       // socket closed or closing — ignore
     }
   }
+}
+
+function computeResult(s: InternalState, endReason: EndReason): RaceResult {
+  const host = s._hostProgress ?? zeroProgress();
+  const guest = s._guestProgress ?? zeroProgress();
+  const startAt = s.startAt ?? Date.now();
+
+  const hostFinished = s._hostFinishedAt !== undefined;
+  const guestFinished = s._guestFinishedAt !== undefined;
+
+  const hostElapsed = s._hostFinishedAt
+    ? s._hostFinishedAt - startAt
+    : Math.max(0, Date.now() - startAt);
+  const guestElapsed = s._guestFinishedAt
+    ? s._guestFinishedAt - startAt
+    : Math.max(0, Date.now() - startAt);
+
+  const hostResult: PlayerResult = {
+    role: "host",
+    wpm: host.wpm,
+    accuracy: host.accuracy,
+    elapsedMs: hostElapsed,
+    pos: host.pos,
+    correctCount: host.correctCount,
+    finishedPassage: hostFinished,
+  };
+  const guestResult: PlayerResult = {
+    role: "guest",
+    wpm: guest.wpm,
+    accuracy: guest.accuracy,
+    elapsedMs: guestElapsed,
+    pos: guest.pos,
+    correctCount: guest.correctCount,
+    finishedPassage: guestFinished,
+  };
+
+  let outcome: RaceOutcome;
+  if (endReason === "finish") {
+    if (hostFinished && !guestFinished) outcome = "host_wins";
+    else if (guestFinished && !hostFinished) outcome = "guest_wins";
+    else if (hostFinished && guestFinished) {
+      outcome =
+        (s._hostFinishedAt ?? 0) <= (s._guestFinishedAt ?? 0)
+          ? "host_wins"
+          : "guest_wins";
+    } else {
+      // Neither finished — shouldn't happen in finish mode
+      outcome = "tie";
+    }
+  } else {
+    // time_up — higher WPM wins, finisher breaks ties
+    if (hostResult.wpm > guestResult.wpm) outcome = "host_wins";
+    else if (guestResult.wpm > hostResult.wpm) outcome = "guest_wins";
+    else if (hostFinished && !guestFinished) outcome = "host_wins";
+    else if (guestFinished && !hostFinished) outcome = "guest_wins";
+    else outcome = "tie";
+  }
+
+  return { outcome, endReason, host: hostResult, guest: guestResult };
 }

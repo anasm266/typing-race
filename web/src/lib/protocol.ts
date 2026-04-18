@@ -7,6 +7,8 @@ export type PassageLength = "short" | "medium" | "long";
 export type EndMode = "finish" | "time";
 export type TimeLimit = 30 | 60 | 90;
 
+export type PlayerRole = "host" | "guest";
+
 export interface RoomConfig {
   endMode: EndMode;
   passageLength: PassageLength;
@@ -25,6 +27,26 @@ export type RoomStatus =
   | "racing"
   | "ended";
 
+export type RaceOutcome = "host_wins" | "guest_wins" | "tie";
+export type EndReason = "finish" | "time_up";
+
+export interface PlayerResult {
+  role: PlayerRole;
+  wpm: number;
+  accuracy: number;
+  elapsedMs: number;
+  pos: number;
+  correctCount: number;
+  finishedPassage: boolean;
+}
+
+export interface RaceResult {
+  outcome: RaceOutcome;
+  endReason: EndReason;
+  host: PlayerResult;
+  guest: PlayerResult;
+}
+
 export interface PublicRoomState {
   roomId: string;
   passage: PassageInfo;
@@ -34,28 +56,38 @@ export interface PublicRoomState {
   createdAt: number;
   /** ms timestamp when racing begins (server clock). Set when 2nd player joins. */
   startAt?: number;
-}
-
-/** Progress update sent frequently during a race. */
-export interface Progress {
-  pos: number;
-  correctCount: number;
-  wpm: number;
+  /** ms timestamp when race ends in time-mode (startAt + timeLimit*1000). */
+  endAt?: number;
+  /** Final result, set when status transitions to "ended". */
+  result?: RaceResult;
 }
 
 /** Client → Server messages */
 export type ClientMsg =
   | { t: "hello" }
   | { t: "ping" }
-  | { t: "progress"; pos: number; correctCount: number; wpm: number }
+  | {
+      t: "progress";
+      pos: number;
+      correctCount: number;
+      wpm: number;
+      accuracy: number;
+    }
   | { t: "finished"; wpm: number; accuracy: number; elapsedMs: number };
 
 /** Server → Client messages */
 export type ServerMsg =
+  | { t: "welcome"; role: PlayerRole }
   | { t: "state"; room: PublicRoomState }
   | { t: "peer_joined"; playerCount: number }
   | { t: "peer_left"; playerCount: number }
-  | { t: "opponent_progress"; pos: number; correctCount: number; wpm: number }
+  | {
+      t: "opponent_progress";
+      pos: number;
+      correctCount: number;
+      wpm: number;
+      accuracy: number;
+    }
   | { t: "opponent_finished"; wpm: number; accuracy: number; elapsedMs: number }
   | { t: "error"; code: string; message: string }
   | { t: "pong" };
@@ -75,5 +107,5 @@ export const DEFAULT_CONFIG: RoomConfig = {
   timeLimit: 60,
 };
 
-/** How long the "get ready" buffer is between 2nd player joining and race starting. */
-export const START_BUFFER_MS = 2000;
+/** Pre-race buffer (3-2-1 countdown). */
+export const START_BUFFER_MS = 3000;

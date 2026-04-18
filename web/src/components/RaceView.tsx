@@ -24,23 +24,16 @@ export function RaceView({
   opponentFinish,
   send,
 }: RaceViewProps) {
-  const { passage, status, startAt } = room;
+  const { passage, status, startAt, config } = room;
   const racing = status === "racing";
 
   const typing = useTyping(passage.text, {
     startAt: racing ? startAt : undefined,
   });
 
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNow(status === "starting" || racing);
 
-  // Pre-race ticker for the "starting in N..." display.
-  useEffect(() => {
-    if (status !== "starting") return;
-    const id = window.setInterval(() => setNow(Date.now()), 100);
-    return () => window.clearInterval(id);
-  }, [status]);
-
-  // Keystroke capture — only when racing and not already done.
+  // Keystroke capture — only when racing and local not done.
   useEffect(() => {
     if (!racing || typing.state === "done") return;
 
@@ -63,11 +56,18 @@ export function RaceView({
   }, [racing, typing.state, typing.handleKey]);
 
   // Broadcast progress on every local position change.
-  // We read latest correctChars/wpm via refs to avoid re-firing on timer ticks.
-  const latestRef = useRef({ correctChars: 0, wpm: 0 });
+  const latestRef = useRef({
+    correctChars: 0,
+    wpm: 0,
+    accuracy: 100,
+  });
   latestRef.current = {
     correctChars: typing.correctChars,
     wpm: typing.wpm,
+    accuracy: calcAccuracy(
+      typing.correctChars,
+      typing.totalKeystrokes
+    ),
   };
   useEffect(() => {
     if (!racing) return;
@@ -77,10 +77,11 @@ export function RaceView({
       pos: typing.typed.length,
       correctCount: latestRef.current.correctChars,
       wpm: latestRef.current.wpm,
+      accuracy: latestRef.current.accuracy,
     });
   }, [typing.typed.length, racing, typing.state, send]);
 
-  // On local finish, tell the server once.
+  // One-shot finished message.
   const finishedSentRef = useRef(false);
   useEffect(() => {
     if (typing.state !== "done") return;
@@ -95,33 +96,40 @@ export function RaceView({
       ),
       elapsedMs: typing.elapsedMs,
     });
-  }, [typing.state, typing.wpm, typing.correctChars, typing.totalKeystrokes, typing.elapsedMs, send]);
+  }, [
+    typing.state,
+    typing.wpm,
+    typing.correctChars,
+    typing.totalKeystrokes,
+    typing.elapsedMs,
+    send,
+  ]);
 
-  // Reset "finished" flag if passage changes (e.g., rematch later).
   useEffect(() => {
     finishedSentRef.current = false;
   }, [passage.text]);
 
-  const preRaceRemaining =
-    startAt !== undefined && status === "starting"
-      ? Math.max(0, Math.ceil((startAt - now) / 1000))
-      : 0;
-
-  const opponentPos = opponentProgress?.pos ?? (opponentFinish ? passage.text.length : undefined);
+  const opponentPos =
+    opponentProgress?.pos ??
+    (opponentFinish ? passage.text.length : undefined);
 
   return (
     <div className="flex flex-col items-center gap-8 w-full max-w-[800px]">
       {status === "starting" ? (
-        <StartingBanner seconds={preRaceRemaining} />
+        <Countdown startAt={startAt} now={now} />
       ) : (
         <StatsBar
-          elapsedMs={typing.elapsedMs}
+          room={room}
+          now={now}
+          selfElapsedMs={typing.elapsedMs}
           selfWpm={typing.wpm}
           selfAccuracy={calcAccuracy(
             typing.correctChars,
             typing.totalKeystrokes
           )}
-          opponentWpm={opponentProgress?.wpm ?? opponentFinish?.wpm ?? null}
+          opponentWpm={
+            opponentProgress?.wpm ?? opponentFinish?.wpm ?? null
+          }
           selfDone={typing.state === "done"}
           opponentDone={!!opponentFinish}
         />
@@ -137,30 +145,54 @@ export function RaceView({
         status={status}
         selfDone={typing.state === "done"}
         opponentDone={!!opponentFinish}
+        endMode={config.endMode}
       />
     </div>
   );
 }
 
-function StartingBanner({ seconds }: { seconds: number }) {
-  const label =
-    seconds > 0 ? (
-      <span>
-        <span className="text-accent">starting</span> in{" "}
-        <span className="text-accent">{seconds}</span>
-      </span>
-    ) : (
-      <span className="text-accent">go!</span>
-    );
+/* -------------------- countdown -------------------- */
+
+function Countdown({
+  startAt,
+  now,
+}: {
+  startAt?: number;
+  now: number;
+}) {
+  if (!startAt) {
+    return <div className="h-[160px]" />;
+  }
+  const remainingMs = startAt - now;
+  const seconds = Math.ceil(remainingMs / 1000);
+
   return (
-    <div className="flex items-center justify-center h-[72px] text-xl tracking-wide">
-      {label}
+    <div className="h-[160px] flex flex-col items-center justify-center">
+      {seconds > 0 ? (
+        <span
+          key={seconds}
+          className="countdown-number text-[6rem] leading-none text-accent font-medium tabular-nums"
+        >
+          {seconds}
+        </span>
+      ) : (
+        <span className="countdown-go text-[5rem] leading-none text-accent font-medium tracking-wider">
+          go!
+        </span>
+      )}
+      <span className="text-[0.7rem] uppercase tracking-[0.2em] text-fg-dim mt-4">
+        {seconds > 0 ? "get ready" : "race starting"}
+      </span>
     </div>
   );
 }
 
+/* -------------------- stats bar -------------------- */
+
 interface StatsBarProps {
-  elapsedMs: number;
+  room: PublicRoomState;
+  now: number;
+  selfElapsedMs: number;
   selfWpm: number;
   selfAccuracy: number;
   opponentWpm: number | null;
@@ -169,13 +201,22 @@ interface StatsBarProps {
 }
 
 function StatsBar({
-  elapsedMs,
+  room,
+  now,
+  selfElapsedMs,
   selfWpm,
   selfAccuracy,
   opponentWpm,
   selfDone,
   opponentDone,
 }: StatsBarProps) {
+  const isTimeMode = room.config.endMode === "time";
+  const timeValue =
+    isTimeMode && room.endAt
+      ? formatElapsed(Math.max(0, room.endAt - now))
+      : formatElapsed(selfElapsedMs);
+  const timeLabel = isTimeMode ? "time left" : "time";
+
   return (
     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-10 w-full">
       <PlayerStats
@@ -188,10 +229,10 @@ function StatsBar({
       />
       <div className="flex flex-col items-center">
         <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
-          time
+          {timeLabel}
         </span>
         <span className="text-2xl tabular-nums text-fg">
-          {formatElapsed(elapsedMs)}
+          {timeValue}
         </span>
       </div>
       <PlayerStats
@@ -224,11 +265,12 @@ function PlayerStats({
   align,
 }: PlayerStatsProps) {
   const textColor = color === "accent" ? "text-accent" : "text-opponent";
+  const dotColor = color === "accent" ? "bg-accent" : "bg-opponent";
   const alignment = align === "right" ? "items-end" : "items-start";
   return (
     <div className={`flex flex-col ${alignment} gap-1`}>
       <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim flex items-center gap-1.5">
-        <span className={`inline-block size-1.5 rounded-full ${color === "accent" ? "bg-accent" : "bg-opponent"}`} />
+        <span className={`inline-block size-1.5 rounded-full ${dotColor}`} />
         {label}
         {done && (
           <span className={`ml-1 ${textColor} text-[0.6rem]`}>
@@ -253,14 +295,18 @@ function PlayerStats({
   );
 }
 
+/* -------------------- footer hint -------------------- */
+
 function FooterHint({
   status,
   selfDone,
   opponentDone,
+  endMode,
 }: {
   status: PublicRoomState["status"];
   selfDone: boolean;
   opponentDone: boolean;
+  endMode: "finish" | "time";
 }) {
   if (status === "starting") {
     return (
@@ -269,11 +315,16 @@ function FooterHint({
       </div>
     );
   }
+  if (endMode === "time" && selfDone) {
+    return (
+      <div className="text-xs text-ok">
+        you finished the passage · waiting for time to run out
+      </div>
+    );
+  }
   if (selfDone && opponentDone) {
     return (
-      <div className="text-xs text-fg-dim">
-        both finished · winner screen + rematch coming in M4/M5
-      </div>
+      <div className="text-xs text-fg-dim">calculating result...</div>
     );
   }
   if (selfDone) {
@@ -291,4 +342,16 @@ function FooterHint({
     );
   }
   return null;
+}
+
+/* -------------------- useNow -------------------- */
+
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const id = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(id);
+  }, [active]);
+  return now;
 }
