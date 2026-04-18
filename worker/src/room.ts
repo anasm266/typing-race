@@ -12,6 +12,7 @@ import type {
   ServerMsg,
 } from "./protocol";
 import { START_BUFFER_MS } from "./protocol";
+import { pickPassage } from "./passages";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
@@ -306,7 +307,66 @@ export class Room extends DurableObject<Env> {
         }
         return;
       }
+
+      case "rematch_request": {
+        if (this.state?.status !== "ended") return;
+        const att = ws.deserializeAttachment() as Attachment | null;
+        if (!att) return;
+
+        const ready = { ...(this.state.rematchReady ?? { host: false, guest: false }) };
+        ready[att.role] = true;
+
+        if (ready.host && ready.guest) {
+          await this.startRematch();
+        } else {
+          this.state = { ...this.state, rematchReady: ready };
+          await this.persistState();
+          this.broadcast({ t: "state", room: toPublic(this.state) });
+        }
+        return;
+      }
+
+      case "rematch_cancel": {
+        if (this.state?.status !== "ended") return;
+        const att = ws.deserializeAttachment() as Attachment | null;
+        if (!att) return;
+
+        const ready = { ...(this.state.rematchReady ?? { host: false, guest: false }) };
+        ready[att.role] = false;
+        const allFalse = !ready.host && !ready.guest;
+
+        this.state = {
+          ...this.state,
+          rematchReady: allFalse ? undefined : ready,
+        };
+        await this.persistState();
+        this.broadcast({ t: "state", room: toPublic(this.state) });
+        return;
+      }
     }
+  }
+
+  private async startRematch(): Promise<void> {
+    if (!this.state) return;
+    const newPassage = pickPassage(
+      this.state.config.passageLength,
+      this.state.passage.id
+    );
+    const startAt = Date.now() + START_BUFFER_MS;
+
+    this.state = {
+      roomId: this.state.roomId,
+      passage: newPassage,
+      config: this.state.config,
+      status: "starting",
+      playerCount: this.state.playerCount,
+      createdAt: this.state.createdAt,
+      startAt,
+      // endAt, result, rematchReady intentionally cleared below by omission
+    };
+    await this.ctx.storage.setAlarm(startAt);
+    await this.persistState();
+    this.broadcast({ t: "state", room: toPublic(this.state) });
   }
 
   async webSocketClose(
@@ -344,12 +404,26 @@ export class Room extends DurableObject<Env> {
         ? "waiting"
         : this.state.status;
 
+    // Clear leaving role's rematch readiness if in ended state.
+    let rematchReady = this.state.rematchReady;
+    if (this.state.status === "ended" && rematchReady) {
+      const leavingAtt = closing.deserializeAttachment() as
+        | Attachment
+        | null;
+      if (leavingAtt) {
+        const next = { ...rematchReady };
+        next[leavingAtt.role] = false;
+        rematchReady = next.host || next.guest ? next : undefined;
+      }
+    }
+
     this.state = {
       ...this.state,
       playerCount: remaining,
       status: nextStatus,
       startAt:
         nextStatus === "waiting" ? undefined : this.state.startAt,
+      rematchReady,
     };
     // If we rolled back to waiting, cancel the countdown alarm.
     if (nextStatus === "waiting") {

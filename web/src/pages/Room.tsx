@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useRoom } from "../hooks/useRoom";
 import { RaceView } from "../components/RaceView";
-import { EndScreen } from "../components/EndScreen";
 
 export function Room() {
   const params = useParams<{ id: string }>();
@@ -56,22 +55,15 @@ export function Room() {
     return <WaitingLobby roomId={roomId} />;
   }
 
-  if (roomState.status === "ended") {
-    return (
-      <EndScreen
-        room={roomState}
-        role={role}
-        onNewRace={() => setLocation("/")}
-      />
-    );
-  }
-
   return (
     <RaceView
+      key={roomState.passage.id}
       room={roomState}
+      role={role}
       opponentProgress={opponentProgress}
       opponentFinish={opponentFinish}
       send={send}
+      onNewRace={() => setLocation("/")}
     />
   );
 }

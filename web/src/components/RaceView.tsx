@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useTyping } from "../hooks/useTyping";
 import { Passage } from "./Passage";
-import { calcAccuracy, formatElapsed } from "../lib/wpm";
+import { EndScreen } from "./EndScreen";
+import { calcAccuracy, formatElapsed, type WpmSample } from "../lib/wpm";
 import type {
   ClientMsg,
+  PlayerRole,
   PublicRoomState,
 } from "../lib/protocol";
 import type {
@@ -13,16 +15,20 @@ import type {
 
 interface RaceViewProps {
   room: PublicRoomState;
+  role: PlayerRole | null;
   opponentProgress: OpponentProgress | null;
   opponentFinish: OpponentFinish | null;
   send: (msg: ClientMsg) => void;
+  onNewRace: () => void;
 }
 
 export function RaceView({
   room,
+  role,
   opponentProgress,
   opponentFinish,
   send,
+  onNewRace,
 }: RaceViewProps) {
   const { passage, status, startAt, config } = room;
   const racing = status === "racing";
@@ -33,11 +39,27 @@ export function RaceView({
 
   const now = useNow(status === "starting" || racing);
 
-  // Keystroke capture — only when racing and local not done.
+  // Accumulate opponent WPM samples for the post-race graph.
+  const [opponentSamples, setOpponentSamples] = useState<WpmSample[]>(
+    []
+  );
+  const lastOpponentWpmRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!racing || typing.state === "done") return;
+    if (!racing || !startAt) return;
+    if (!opponentProgress) return;
+    if (lastOpponentWpmRef.current === opponentProgress.wpm) return;
+    lastOpponentWpmRef.current = opponentProgress.wpm;
+    const t = Math.round(((Date.now() - startAt) / 1000) * 10) / 10;
+    setOpponentSamples((s) => [...s, { t, wpm: opponentProgress.wpm }]);
+  }, [opponentProgress, racing, startAt]);
 
+  // Always-on keyboard listener: preventDefault during both countdown
+  // and race so Space doesn't scroll the page; forward to handleKey only
+  // when the race is actually live.
+  useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      if (status !== "starting" && status !== "racing") return;
+
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -48,12 +70,14 @@ export function RaceView({
 
       if (e.key === "Backspace" || e.key === " " || e.key.length === 1) {
         e.preventDefault();
-        typing.handleKey(e.key);
+        if (status === "racing" && typing.state !== "done") {
+          typing.handleKey(e.key);
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [racing, typing.state, typing.handleKey]);
+  }, [status, typing.state, typing.handleKey]);
 
   // Broadcast progress on every local position change.
   const latestRef = useRef({
@@ -108,6 +132,21 @@ export function RaceView({
   useEffect(() => {
     finishedSentRef.current = false;
   }, [passage.text]);
+
+  // Render end screen once race is over, preserving sample history.
+  if (status === "ended") {
+    return (
+      <EndScreen
+        room={room}
+        role={role}
+        mySamples={typing.wpmSamples}
+        opponentSamples={opponentSamples}
+        onRematchRequest={() => send({ t: "rematch_request" })}
+        onRematchCancel={() => send({ t: "rematch_cancel" })}
+        onNewRace={onNewRace}
+      />
+    );
+  }
 
   const opponentPos =
     opponentProgress?.pos ??
