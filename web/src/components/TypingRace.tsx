@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
+import { useCapsLock } from "../hooks/useCapsLock";
 import { useTyping } from "../hooks/useTyping";
 import { randomPassage, type Passage } from "../lib/passages";
+import { CapsLockWarning } from "./CapsLockWarning";
 import { Passage as PassageView } from "./Passage";
 import { Stats } from "./Stats";
 import { ResultScreen } from "./ResultScreen";
@@ -8,6 +10,7 @@ import { ResultScreen } from "./ResultScreen";
 export function TypingRace() {
   const [passage, setPassage] = useState<Passage>(() => randomPassage());
   const typing = useTyping(passage.text);
+  const capsLockOn = useCapsLock(typing.state !== "done");
   const { state, handleKey, reset } = typing;
 
   const restart = useCallback(() => {
@@ -69,6 +72,8 @@ export function TypingRace() {
         totalKeystrokes={typing.totalKeystrokes}
         state={typing.state}
       />
+
+      <CapsLockWarning visible={capsLockOn} />
 
       <PassageView passage={passage.text} typed={typing.typed} />
 
