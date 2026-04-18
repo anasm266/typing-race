@@ -110,6 +110,13 @@ export function Home() {
           >
             recent races →
           </Link>
+          <span className="text-fg-dimmer">·</span>
+          <Link
+            href="/analytics"
+            className="hover:text-accent transition-colors"
+          >
+            analytics →
+          </Link>
         </div>
       </div>
     </div>

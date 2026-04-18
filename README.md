@@ -6,7 +6,9 @@ Open a room, send it to a friend, and race immediately. No accounts, no lobby br
 
 - Live app: [typing-race.pages.dev](https://typing-race.pages.dev)
 - Recent races: [typing-race.pages.dev/recent](https://typing-race.pages.dev/recent)
+- Analytics: [typing-race.pages.dev/analytics](https://typing-race.pages.dev/analytics)
 - API health: [typing-race-api.kingzcopz266.workers.dev/health](https://typing-race-api.kingzcopz266.workers.dev/health)
+- Analytics API: [typing-race-api.kingzcopz266.workers.dev/analytics](https://typing-race-api.kingzcopz266.workers.dev/analytics)
 - Public status page: [typing-race.betteruptime.com](https://typing-race.betteruptime.com)
 
 <!-- Add demo GIF here after recording. See `docs/demo-gif.md`. -->
@@ -22,6 +24,7 @@ Open a room, send it to a friend, and race immediately. No accounts, no lobby br
 - Handles reconnects, disconnect grace periods, and room expiry
 - Includes lightweight social UX with tap-only reaction toasts
 - Publishes a public recent-races page backed by D1
+- Tracks room funnel analytics like creates, joins, starts, completions, and pre-start drop-offs
 
 ## Why this project exists
 
@@ -39,7 +42,7 @@ Most student typing games stop at a local timer and some text highlighting. This
 | --- | --- |
 | Frontend | React 19, TypeScript, Vite 8, Tailwind CSS v4, wouter |
 | Realtime | Cloudflare Workers + Durable Objects + WebSockets |
-| Persistence | Cloudflare D1 (SQLite) |
+| Persistence | Cloudflare D1 (SQLite) for race history and room analytics |
 | Charts | Recharts |
 | Monitoring | Sentry, Better Stack |
 | Load testing | k6 |
@@ -51,12 +54,10 @@ Most student typing games stop at a local timer and some text highlighting. This
 Browser (React app on Cloudflare Pages)
   -> Worker routes HTTP and WebSocket upgrades
   -> Durable Object owns one room's live state
-  -> D1 stores completed race summaries for /recent
+  -> D1 stores completed race summaries and room lifecycle analytics
 ```
 
 Each room is managed by a single Durable Object instance. That instance is responsible for player joins, countdown timing, progress broadcasts, disconnect handling, winner calculation, rematch flow, and expiry alarms. The frontend keeps typing feedback local-first so keystrokes feel immediate, while the Worker remains the source of truth for multiplayer state.
-
-For the original build plan and milestone notes, see [`PLAN.md`](./PLAN.md).
 
 ## Feature highlights
 
@@ -74,6 +75,7 @@ For the original build plan and milestone notes, see [`PLAN.md`](./PLAN.md).
 - Grace periods for disconnects and finish-mode cleanup
 - Clear invalid/full/expired room states
 - Public recent-races page
+- Public analytics page for real app-level usage tracking
 - Better Stack uptime monitoring and Sentry error tracking
 
 ### Product feel
@@ -90,8 +92,6 @@ For the original build plan and milestone notes, see [`PLAN.md`](./PLAN.md).
 |-- web/          Frontend app
 |-- worker/       Worker, Durable Object, and D1 migrations
 |-- load-tests/   k6 scenarios
-|-- docs/         Supporting project docs and media notes
-|-- PLAN.md       Scope, decisions, and milestone history
 `-- package.json  Workspace scripts
 ```
 
@@ -136,6 +136,7 @@ When D1 schema changes, apply the migration from the `worker` package:
 ```bash
 cd worker
 wrangler d1 execute typing-race-db --file=migrations/0001_races.sql --remote
+wrangler d1 execute typing-race-db --file=migrations/0002_room_analytics.sql --remote
 ```
 
 ## Load testing
@@ -174,6 +175,7 @@ Completed:
 - rematch flow
 - reconnect/disconnect handling
 - public recent-races page
+- room funnel analytics page and API
 - observability and k6 test coverage
 - reaction bar polish
 
