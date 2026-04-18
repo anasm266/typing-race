@@ -28,7 +28,14 @@ export type RoomStatus =
   | "ended";
 
 export type RaceOutcome = "host_wins" | "guest_wins" | "tie";
-export type EndReason = "finish" | "time_up";
+export type EndReason = "finish" | "time_up" | "disconnect";
+
+/** Per-role disconnect grace info while racing. */
+export interface DisconnectInfo {
+  role: PlayerRole;
+  at: number;
+  graceUntil: number;
+}
 
 export interface PlayerResult {
   role: PlayerRole;
@@ -67,6 +74,8 @@ export interface PublicRoomState {
   result?: RaceResult;
   /** Per-role rematch readiness, only populated while status === "ended". */
   rematchReady?: RematchReady;
+  /** Set while a player is disconnected mid-race and grace is counting down. */
+  disconnected?: DisconnectInfo;
 }
 
 /** Client → Server messages */
@@ -86,7 +95,7 @@ export type ClientMsg =
 
 /** Server → Client messages */
 export type ServerMsg =
-  | { t: "welcome"; role: PlayerRole }
+  | { t: "welcome"; role: PlayerRole; sessionToken: string }
   | { t: "state"; room: PublicRoomState }
   | { t: "peer_joined"; playerCount: number }
   | { t: "peer_left"; playerCount: number }
@@ -118,3 +127,9 @@ export const DEFAULT_CONFIG: RoomConfig = {
 
 /** Pre-race buffer (3-2-1 countdown). */
 export const START_BUFFER_MS = 3000;
+
+/** Grace period when a player drops mid-race before they forfeit. */
+export const DISCONNECT_GRACE_MS = 30_000;
+
+/** A room with zero connected players expires this long after the last leave. */
+export const ROOM_EXPIRY_MS = 10 * 60 * 1000;

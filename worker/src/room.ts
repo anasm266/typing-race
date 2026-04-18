@@ -11,7 +11,11 @@ import type {
   RoomConfig,
   ServerMsg,
 } from "./protocol";
-import { START_BUFFER_MS } from "./protocol";
+import {
+  DISCONNECT_GRACE_MS,
+  ROOM_EXPIRY_MS,
+  START_BUFFER_MS,
+} from "./protocol";
 import { pickPassage } from "./passages";
 
 interface Env {
@@ -20,6 +24,7 @@ interface Env {
 
 interface Attachment {
   role: PlayerRole;
+  sessionToken: string;
   joinedAt: number;
 }
 
@@ -28,7 +33,6 @@ interface PlayerProgress {
   correctCount: number;
   wpm: number;
   accuracy: number;
-  /** ms timestamp of last update (server clock). */
   at: number;
 }
 
@@ -39,9 +43,12 @@ interface PlayerProgress {
 interface InternalState extends PublicRoomState {
   _hostProgress?: PlayerProgress;
   _guestProgress?: PlayerProgress;
-  /** ms timestamp the host sent their "finished" msg (whole passage typed). */
   _hostFinishedAt?: number;
   _guestFinishedAt?: number;
+  _hostSessionToken?: string;
+  _guestSessionToken?: string;
+  /** ms timestamp after which an empty room self-destroys. */
+  _expiresAt?: number;
 }
 
 function toPublic(s: InternalState): PublicRoomState {
@@ -50,6 +57,9 @@ function toPublic(s: InternalState): PublicRoomState {
     _guestProgress,
     _hostFinishedAt,
     _guestFinishedAt,
+    _hostSessionToken,
+    _guestSessionToken,
+    _expiresAt,
     ...pub
   } = s;
   return pub;
@@ -58,6 +68,9 @@ function toPublic(s: InternalState): PublicRoomState {
 function zeroProgress(): PlayerProgress {
   return { pos: 0, correctCount: 0, wpm: 0, accuracy: 100, at: 0 };
 }
+
+/** Close code used when the server deliberately replaces a WS for the same role. */
+const SUPERSEDE_CODE = 4001;
 
 export class Room extends DurableObject<Env> {
   private state: InternalState | null = null;
@@ -129,8 +142,12 @@ export class Room extends DurableObject<Env> {
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    const existing = this.ctx.getWebSockets();
-    if (existing.length >= 2) {
+    const url = new URL(request.url);
+    const providedToken = url.searchParams.get("token");
+
+    const resolved = this.resolveRole(providedToken);
+
+    if (resolved.kind === "full") {
       server.accept();
       this.safeSend(server, {
         t: "error",
@@ -141,37 +158,78 @@ export class Room extends DurableObject<Env> {
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    const role: PlayerRole =
-      existing.length === 0 ? "host" : "guest";
+    const { role, sessionToken, supersedes } = resolved;
+
+    // If this reconnect is replacing an existing socket for the same role,
+    // close the old one with the supersede code so webSocketClose knows to
+    // skip the disconnect-grace flow.
+    if (supersedes) {
+      for (const existingWs of this.ctx.getWebSockets()) {
+        const att = existingWs.deserializeAttachment() as
+          | Attachment
+          | null;
+        if (att?.role === role) {
+          try {
+            existingWs.close(SUPERSEDE_CODE, "superseded");
+          } catch {
+            // already closed
+          }
+        }
+      }
+    }
+
     server.serializeAttachment({
       role,
+      sessionToken,
       joinedAt: Date.now(),
     } satisfies Attachment);
-
     this.ctx.acceptWebSocket(server);
 
-    const newCount = existing.length + 1;
-    this.state = { ...this.state, playerCount: newCount };
+    // Update state: set token for the role, bump count, clear any
+    // pending disconnect for this role, clear pending expiry.
+    this.state = {
+      ...this.state,
+      playerCount: this.ctx.getWebSockets().length,
+      _hostSessionToken:
+        role === "host"
+          ? sessionToken
+          : this.state._hostSessionToken,
+      _guestSessionToken:
+        role === "guest"
+          ? sessionToken
+          : this.state._guestSessionToken,
+      disconnected:
+        this.state.disconnected?.role === role
+          ? undefined
+          : this.state.disconnected,
+      _expiresAt: undefined,
+    };
 
-    if (newCount === 2 && this.state.status === "waiting") {
-      const startAt = Date.now() + START_BUFFER_MS;
+    // If this is the second player joining a waiting room, kick off
+    // the countdown. Otherwise leave status alone.
+    if (
+      this.state.playerCount === 2 &&
+      this.state.status === "waiting"
+    ) {
       this.state = {
         ...this.state,
         status: "starting",
-        startAt,
+        startAt: Date.now() + START_BUFFER_MS,
       };
-      await this.ctx.storage.setAlarm(startAt);
     }
 
     await this.persistState();
+    await this.rescheduleAlarm();
 
-    this.safeSend(server, { t: "welcome", role });
+    this.safeSend(server, { t: "welcome", role, sessionToken });
     this.safeSend(server, { t: "state", room: toPublic(this.state) });
 
-    for (const other of existing) {
+    // Notify others of new/returning peer.
+    for (const other of this.ctx.getWebSockets()) {
+      if (other === server) continue;
       this.safeSend(other, {
         t: "peer_joined",
-        playerCount: newCount,
+        playerCount: this.state.playerCount,
       });
       this.safeSend(other, { t: "state", room: toPublic(this.state) });
     }
@@ -179,39 +237,58 @@ export class Room extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /** Alarm handler: either transition starting→racing, or end a time-mode race. */
-  async alarm(): Promise<void> {
-    if (!this.state) return;
+  /** Decide which role a connection should take, based on its session token. */
+  private resolveRole(
+    providedToken: string | null
+  ):
+    | { kind: "full" }
+    | {
+        kind: "join";
+        role: PlayerRole;
+        sessionToken: string;
+        supersedes: boolean;
+      } {
+    if (!this.state) return { kind: "full" };
 
-    if (this.state.status === "starting") {
-      // Pre-race buffer elapsed — start the race.
-      const next: InternalState = {
-        ...this.state,
-        status: "racing",
-        _hostProgress: undefined,
-        _guestProgress: undefined,
-        _hostFinishedAt: undefined,
-        _guestFinishedAt: undefined,
-      };
-      if (this.state.config.endMode === "time") {
-        next.endAt =
-          (this.state.startAt ?? Date.now()) +
-          this.state.config.timeLimit * 1000;
-        await this.ctx.storage.setAlarm(next.endAt);
+    // Token match: reconnect into existing slot (superseding any live ws).
+    if (providedToken) {
+      if (this.state._hostSessionToken === providedToken) {
+        return {
+          kind: "join",
+          role: "host",
+          sessionToken: providedToken,
+          supersedes: true,
+        };
       }
-      this.state = next;
-      await this.persistState();
-      this.broadcast({ t: "state", room: toPublic(this.state) });
-      return;
+      if (this.state._guestSessionToken === providedToken) {
+        return {
+          kind: "join",
+          role: "guest",
+          sessionToken: providedToken,
+          supersedes: true,
+        };
+      }
     }
 
-    if (
-      this.state.status === "racing" &&
-      this.state.config.endMode === "time"
-    ) {
-      await this.endRace("time_up");
-      return;
+    // Fresh joiner: find an empty slot.
+    if (!this.state._hostSessionToken) {
+      return {
+        kind: "join",
+        role: "host",
+        sessionToken: crypto.randomUUID(),
+        supersedes: false,
+      };
     }
+    if (!this.state._guestSessionToken) {
+      return {
+        kind: "join",
+        role: "guest",
+        sessionToken: crypto.randomUUID(),
+        supersedes: false,
+      };
+    }
+
+    return { kind: "full" };
   }
 
   async webSocketMessage(
@@ -255,7 +332,6 @@ export class Room extends DurableObject<Env> {
           this.state = { ...this.state, _guestProgress: progress };
         }
         await this.persistState();
-
         this.broadcastExcept(ws, {
           t: "opponent_progress",
           pos: msg.pos,
@@ -271,7 +347,6 @@ export class Room extends DurableObject<Env> {
         const att = ws.deserializeAttachment() as Attachment | null;
         if (!att) return;
 
-        // Upsert final stats into progress (most accurate snapshot).
         const finalProgress: PlayerProgress = {
           pos: this.state.passage.text.length,
           correctCount: this.state.passage.text.length,
@@ -301,7 +376,6 @@ export class Room extends DurableObject<Env> {
           elapsedMs: msg.elapsedMs,
         });
 
-        // In finish-mode, first finisher wins and race ends immediately.
         if (this.state.config.endMode === "finish") {
           await this.endRace("finish");
         }
@@ -313,7 +387,12 @@ export class Room extends DurableObject<Env> {
         const att = ws.deserializeAttachment() as Attachment | null;
         if (!att) return;
 
-        const ready = { ...(this.state.rematchReady ?? { host: false, guest: false }) };
+        const ready = {
+          ...(this.state.rematchReady ?? {
+            host: false,
+            guest: false,
+          }),
+        };
         ready[att.role] = true;
 
         if (ready.host && ready.guest) {
@@ -331,7 +410,12 @@ export class Room extends DurableObject<Env> {
         const att = ws.deserializeAttachment() as Attachment | null;
         if (!att) return;
 
-        const ready = { ...(this.state.rematchReady ?? { host: false, guest: false }) };
+        const ready = {
+          ...(this.state.rematchReady ?? {
+            host: false,
+            guest: false,
+          }),
+        };
         ready[att.role] = false;
         const allFalse = !ready.host && !ready.guest;
 
@@ -344,6 +428,217 @@ export class Room extends DurableObject<Env> {
         return;
       }
     }
+  }
+
+  async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean
+  ): Promise<void> {
+    console.log(
+      `[room ${this.state?.roomId}] close: code=${code} reason=${reason} clean=${wasClean}`
+    );
+    if (code === SUPERSEDE_CODE) {
+      // This ws was replaced by a fresh connection for the same role
+      // (reconnect). Skip the disconnect-grace flow.
+      return;
+    }
+    try {
+      ws.close();
+    } catch {
+      // already closed
+    }
+    await this.handleDisconnect(ws);
+  }
+
+  async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    console.log(
+      `[room ${this.state?.roomId}] ws error: ${String(error)}`
+    );
+    await this.handleDisconnect(ws);
+  }
+
+  private async handleDisconnect(closing: WebSocket): Promise<void> {
+    if (!this.state) return;
+
+    const att = closing.deserializeAttachment() as Attachment | null;
+    const remaining = this.ctx
+      .getWebSockets()
+      .filter((s) => s !== closing).length;
+
+    // Rollback a pre-race lobby to waiting.
+    let nextStatus: PublicRoomState["status"] = this.state.status;
+    if (remaining < 2 && this.state.status === "starting") {
+      nextStatus = "waiting";
+    }
+
+    // Mid-race disconnect → start grace countdown on the dropped role.
+    let disconnected = this.state.disconnected;
+    if (this.state.status === "racing" && att && remaining < 2) {
+      disconnected = {
+        role: att.role,
+        at: Date.now(),
+        graceUntil: Date.now() + DISCONNECT_GRACE_MS,
+      };
+    }
+
+    // Clear rematch readiness for the leaving role.
+    let rematchReady = this.state.rematchReady;
+    if (this.state.status === "ended" && rematchReady && att) {
+      const next = { ...rematchReady };
+      next[att.role] = false;
+      rematchReady = next.host || next.guest ? next : undefined;
+    }
+
+    // Schedule room expiry if nobody is connected anymore.
+    const expiresAt =
+      remaining === 0
+        ? Date.now() + ROOM_EXPIRY_MS
+        : undefined;
+
+    this.state = {
+      ...this.state,
+      playerCount: remaining,
+      status: nextStatus,
+      startAt:
+        nextStatus === "waiting" ? undefined : this.state.startAt,
+      rematchReady,
+      disconnected,
+      _expiresAt: expiresAt,
+    };
+    await this.persistState();
+    await this.rescheduleAlarm();
+
+    for (const other of this.ctx.getWebSockets()) {
+      if (other === closing) continue;
+      this.safeSend(other, {
+        t: "peer_left",
+        playerCount: remaining,
+      });
+      this.safeSend(other, { t: "state", room: toPublic(this.state) });
+    }
+  }
+
+  /* -------------------- alarm orchestration -------------------- */
+
+  /**
+   * Compute the next instant at which we need to run code, then schedule
+   * a single DO alarm. Replaces all ad-hoc setAlarm calls elsewhere.
+   */
+  private async rescheduleAlarm(): Promise<void> {
+    if (!this.state) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    const s = this.state;
+    const candidates: number[] = [];
+
+    if (s.status === "starting" && s.startAt) {
+      candidates.push(s.startAt);
+    }
+    if (s.status === "racing" && s.disconnected) {
+      candidates.push(s.disconnected.graceUntil);
+    }
+    if (s.status === "racing" && s.endAt) {
+      candidates.push(s.endAt);
+    }
+    if (s._expiresAt) {
+      candidates.push(s._expiresAt);
+    }
+
+    if (candidates.length === 0) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+
+    const next = Math.min(...candidates);
+    await this.ctx.storage.setAlarm(next);
+  }
+
+  async alarm(): Promise<void> {
+    if (!this.state) return;
+    const now = Date.now();
+
+    // Room expiry takes precedence: if nobody's here and the expiry has
+    // fired, wipe the room so future connections see "room_not_found".
+    if (
+      this.state._expiresAt !== undefined &&
+      now >= this.state._expiresAt &&
+      this.state.playerCount === 0
+    ) {
+      this.state = null;
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+
+    // Countdown elapsed → start the race.
+    if (
+      this.state.status === "starting" &&
+      this.state.startAt &&
+      now >= this.state.startAt
+    ) {
+      const next: InternalState = {
+        ...this.state,
+        status: "racing",
+        _hostProgress: undefined,
+        _guestProgress: undefined,
+        _hostFinishedAt: undefined,
+        _guestFinishedAt: undefined,
+      };
+      if (this.state.config.endMode === "time") {
+        next.endAt =
+          (this.state.startAt ?? now) +
+          this.state.config.timeLimit * 1000;
+      }
+      this.state = next;
+      await this.persistState();
+      this.broadcast({ t: "state", room: toPublic(this.state) });
+      await this.rescheduleAlarm();
+      return;
+    }
+
+    // Grace expired → forfeit disconnected player.
+    if (
+      this.state.status === "racing" &&
+      this.state.disconnected &&
+      now >= this.state.disconnected.graceUntil
+    ) {
+      await this.endRace("disconnect");
+      return;
+    }
+
+    // Time-mode timer elapsed → end race.
+    if (
+      this.state.status === "racing" &&
+      this.state.endAt &&
+      now >= this.state.endAt
+    ) {
+      await this.endRace("time_up");
+      return;
+    }
+
+    // Shouldn't normally get here, but reschedule just in case something
+    // else is still pending.
+    await this.rescheduleAlarm();
+  }
+
+  /* -------------------- race end & rematch -------------------- */
+
+  private async endRace(reason: EndReason): Promise<void> {
+    if (!this.state) return;
+    if (this.state.status === "ended") return;
+
+    const result = computeResult(this.state, reason);
+    this.state = {
+      ...this.state,
+      status: "ended",
+      result,
+      disconnected: undefined,
+    };
+    await this.persistState();
+    await this.rescheduleAlarm();
+    this.broadcast({ t: "state", room: toPublic(this.state) });
   }
 
   private async startRematch(): Promise<void> {
@@ -362,96 +657,15 @@ export class Room extends DurableObject<Env> {
       playerCount: this.state.playerCount,
       createdAt: this.state.createdAt,
       startAt,
-      // endAt, result, rematchReady intentionally cleared below by omission
+      _hostSessionToken: this.state._hostSessionToken,
+      _guestSessionToken: this.state._guestSessionToken,
     };
-    await this.ctx.storage.setAlarm(startAt);
     await this.persistState();
+    await this.rescheduleAlarm();
     this.broadcast({ t: "state", room: toPublic(this.state) });
   }
 
-  async webSocketClose(
-    ws: WebSocket,
-    code: number,
-    reason: string,
-    wasClean: boolean
-  ): Promise<void> {
-    console.log(
-      `[room ${this.state?.roomId}] close: code=${code} reason=${reason} clean=${wasClean}`
-    );
-    try {
-      ws.close();
-    } catch {
-      // already closed
-    }
-    await this.handleDisconnect(ws);
-  }
-
-  async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
-    console.log(
-      `[room ${this.state?.roomId}] ws error: ${String(error)}`
-    );
-    await this.handleDisconnect(ws);
-  }
-
-  private async handleDisconnect(closing: WebSocket): Promise<void> {
-    if (!this.state) return;
-    const remaining = this.ctx
-      .getWebSockets()
-      .filter((s) => s !== closing).length;
-
-    const nextStatus: PublicRoomState["status"] =
-      remaining < 2 && this.state.status === "starting"
-        ? "waiting"
-        : this.state.status;
-
-    // Clear leaving role's rematch readiness if in ended state.
-    let rematchReady = this.state.rematchReady;
-    if (this.state.status === "ended" && rematchReady) {
-      const leavingAtt = closing.deserializeAttachment() as
-        | Attachment
-        | null;
-      if (leavingAtt) {
-        const next = { ...rematchReady };
-        next[leavingAtt.role] = false;
-        rematchReady = next.host || next.guest ? next : undefined;
-      }
-    }
-
-    this.state = {
-      ...this.state,
-      playerCount: remaining,
-      status: nextStatus,
-      startAt:
-        nextStatus === "waiting" ? undefined : this.state.startAt,
-      rematchReady,
-    };
-    // If we rolled back to waiting, cancel the countdown alarm.
-    if (nextStatus === "waiting") {
-      await this.ctx.storage.deleteAlarm();
-    }
-    await this.persistState();
-
-    for (const other of this.ctx.getWebSockets()) {
-      if (other === closing) continue;
-      this.safeSend(other, {
-        t: "peer_left",
-        playerCount: remaining,
-      });
-      this.safeSend(other, { t: "state", room: toPublic(this.state) });
-    }
-  }
-
-  private async endRace(reason: EndReason): Promise<void> {
-    if (!this.state) return;
-    if (this.state.status === "ended") return;
-
-    const result = computeResult(this.state, reason);
-    this.state = { ...this.state, status: "ended", result };
-    await this.ctx.storage.deleteAlarm();
-    await this.persistState();
-
-    this.broadcast({ t: "state", room: toPublic(this.state) });
-  }
+  /* -------------------- broadcast helpers -------------------- */
 
   private broadcast(msg: ServerMsg): void {
     for (const ws of this.ctx.getWebSockets()) {
@@ -480,7 +694,10 @@ export class Room extends DurableObject<Env> {
   }
 }
 
-function computeResult(s: InternalState, endReason: EndReason): RaceResult {
+function computeResult(
+  s: InternalState,
+  endReason: EndReason
+): RaceResult {
   const host = s._hostProgress ?? zeroProgress();
   const guest = s._guestProgress ?? zeroProgress();
   const startAt = s.startAt ?? Date.now();
@@ -524,11 +741,19 @@ function computeResult(s: InternalState, endReason: EndReason): RaceResult {
           ? "host_wins"
           : "guest_wins";
     } else {
-      // Neither finished — shouldn't happen in finish mode
       outcome = "tie";
     }
+  } else if (endReason === "disconnect") {
+    // The player who disconnected forfeits; the other wins.
+    if (s.disconnected?.role === "host") outcome = "guest_wins";
+    else if (s.disconnected?.role === "guest") outcome = "host_wins";
+    else {
+      // Shouldn't happen — fall back to whoever typed more.
+      outcome =
+        hostResult.wpm >= guestResult.wpm ? "host_wins" : "guest_wins";
+    }
   } else {
-    // time_up — higher WPM wins, finisher breaks ties
+    // time_up
     if (hostResult.wpm > guestResult.wpm) outcome = "host_wins";
     else if (guestResult.wpm > hostResult.wpm) outcome = "guest_wins";
     else if (hostFinished && !guestFinished) outcome = "host_wins";

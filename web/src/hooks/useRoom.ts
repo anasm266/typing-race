@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { roomWsUrl } from "../lib/api";
+import {
+  getSessionToken,
+  roomWsUrl,
+  setSessionToken,
+} from "../lib/api";
 import type {
   ClientMsg,
   PlayerRole,
@@ -10,8 +14,8 @@ import type {
 export type ConnectionState =
   | "connecting"
   | "open"
-  | "closed"
-  | "error";
+  | "reconnecting"
+  | "closed";
 
 export interface OpponentProgress {
   pos: number;
@@ -36,6 +40,9 @@ export interface UseRoomResult {
   send: (msg: ClientMsg) => void;
 }
 
+const MAX_RETRIES = 4;
+const RETRY_DELAYS_MS = [500, 1500, 3000, 5000];
+
 export function useRoom(roomId: string): UseRoomResult {
   const [roomState, setRoomState] = useState<PublicRoomState | null>(
     null
@@ -48,84 +55,130 @@ export function useRoom(roomId: string): UseRoomResult {
     useState<OpponentProgress | null>(null);
   const [opponentFinish, setOpponentFinish] =
     useState<OpponentFinish | null>(null);
+
   const wsRef = useRef<WebSocket | null>(null);
+  const retryCountRef = useRef(0);
+  const retryTimeoutRef = useRef<number | null>(null);
+  const unmountedRef = useRef(false);
 
   useEffect(() => {
+    unmountedRef.current = false;
     setConnectionState("connecting");
     setError(null);
     setRoomState(null);
     setRole(null);
     setOpponentProgress(null);
     setOpponentFinish(null);
+    retryCountRef.current = 0;
 
-    const ws = new WebSocket(roomWsUrl(roomId));
-    wsRef.current = ws;
+    function connect() {
+      if (unmountedRef.current) return;
 
-    ws.addEventListener("open", () => {
-      setConnectionState("open");
-      ws.send(JSON.stringify({ t: "hello" } satisfies ClientMsg));
-    });
+      const token = getSessionToken(roomId) ?? undefined;
+      const ws = new WebSocket(roomWsUrl(roomId, token));
+      wsRef.current = ws;
 
-    ws.addEventListener("message", (ev) => {
-      let msg: ServerMsg;
-      try {
-        msg = JSON.parse(ev.data) as ServerMsg;
-      } catch {
-        return;
-      }
+      ws.addEventListener("open", () => {
+        retryCountRef.current = 0;
+        setConnectionState("open");
+        ws.send(JSON.stringify({ t: "hello" } satisfies ClientMsg));
+      });
 
-      switch (msg.t) {
-        case "welcome":
-          setRole(msg.role);
+      ws.addEventListener("message", (ev) => {
+        let msg: ServerMsg;
+        try {
+          msg = JSON.parse(ev.data) as ServerMsg;
+        } catch {
           return;
-        case "state":
-          setRoomState(msg.room);
-          if (msg.room.status === "starting" || msg.room.status === "waiting") {
-            setOpponentProgress(null);
-            setOpponentFinish(null);
-          }
-          return;
-        case "error":
-          setError(msg.code);
-          return;
-        case "opponent_progress":
-          setOpponentProgress({
-            pos: msg.pos,
-            correctCount: msg.correctCount,
-            wpm: msg.wpm,
-            accuracy: msg.accuracy,
-          });
-          return;
-        case "opponent_finished":
-          setOpponentFinish({
-            wpm: msg.wpm,
-            accuracy: msg.accuracy,
-            elapsedMs: msg.elapsedMs,
-          });
-          return;
-        case "peer_joined":
-        case "peer_left":
-        case "pong":
-          return;
-      }
-    });
+        }
 
-    ws.addEventListener("close", (ev) => {
-      setConnectionState("closed");
-      if (ev.code === 4004 || ev.reason?.includes("not_found")) {
-        setError("room_not_found");
-      } else if (ev.code === 4009 || ev.reason?.includes("full")) {
-        setError("room_full");
-      }
-    });
+        switch (msg.t) {
+          case "welcome":
+            setRole(msg.role);
+            setSessionToken(roomId, msg.sessionToken);
+            return;
+          case "state":
+            setRoomState(msg.room);
+            if (
+              msg.room.status === "starting" ||
+              msg.room.status === "waiting"
+            ) {
+              setOpponentProgress(null);
+              setOpponentFinish(null);
+            }
+            return;
+          case "error":
+            setError(msg.code);
+            return;
+          case "opponent_progress":
+            setOpponentProgress({
+              pos: msg.pos,
+              correctCount: msg.correctCount,
+              wpm: msg.wpm,
+              accuracy: msg.accuracy,
+            });
+            return;
+          case "opponent_finished":
+            setOpponentFinish({
+              wpm: msg.wpm,
+              accuracy: msg.accuracy,
+              elapsedMs: msg.elapsedMs,
+            });
+            return;
+          case "peer_joined":
+          case "peer_left":
+          case "pong":
+            return;
+        }
+      });
 
-    ws.addEventListener("error", () => {
-      setConnectionState("error");
-    });
+      ws.addEventListener("close", (ev) => {
+        if (unmountedRef.current) return;
+
+        // Terminal errors — no retry.
+        if (ev.code === 4004 || ev.reason?.includes("not_found")) {
+          setError("room_not_found");
+          setConnectionState("closed");
+          return;
+        }
+        if (ev.code === 4009 || ev.reason?.includes("full")) {
+          setError("room_full");
+          setConnectionState("closed");
+          return;
+        }
+
+        // Reconnect with backoff.
+        if (retryCountRef.current < MAX_RETRIES) {
+          const delay =
+            RETRY_DELAYS_MS[retryCountRef.current] ?? 5000;
+          retryCountRef.current += 1;
+          setConnectionState("reconnecting");
+          retryTimeoutRef.current = window.setTimeout(
+            connect,
+            delay
+          );
+        } else {
+          setConnectionState("closed");
+          setError("connection_lost");
+        }
+      });
+
+      ws.addEventListener("error", () => {
+        // close handler does the actual reconnect; onerror alone isn't
+        // always followed by a useful code, so we just let close drive.
+      });
+    }
+
+    connect();
 
     return () => {
+      unmountedRef.current = true;
+      if (retryTimeoutRef.current !== null) {
+        window.clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
       try {
-        ws.close();
+        wsRef.current?.close();
       } catch {
         // ignore
       }
