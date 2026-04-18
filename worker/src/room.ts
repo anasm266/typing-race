@@ -20,6 +20,8 @@ import { pickPassage } from "./passages";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
+  DB: D1Database;
+  SENTRY_DSN: string;
 }
 
 interface Attachment {
@@ -630,6 +632,7 @@ export class Room extends DurableObject<Env> {
     if (this.state.status === "ended") return;
 
     const result = computeResult(this.state, reason);
+    const snapshotForDb = this.state;
     this.state = {
       ...this.state,
       status: "ended",
@@ -639,6 +642,51 @@ export class Room extends DurableObject<Env> {
     await this.persistState();
     await this.rescheduleAlarm();
     this.broadcast({ t: "state", room: toPublic(this.state) });
+
+    // Write to the leaderboard DB; failures here must not affect the race.
+    this.ctx.waitUntil(
+      this.recordRace(snapshotForDb, result).catch(() => {
+        // swallow — captured in Sentry by withSentry wrapper if it re-throws
+      })
+    );
+  }
+
+  private async recordRace(
+    stateAtEnd: InternalState,
+    result: RaceResult
+  ): Promise<void> {
+    const duration =
+      result.host.elapsedMs > result.guest.elapsedMs
+        ? result.host.elapsedMs
+        : result.guest.elapsedMs;
+
+    await this.env.DB.prepare(
+      `INSERT INTO races (
+         id, finished_at, end_reason, outcome,
+         passage_id, passage_length, passage_words,
+         duration_ms,
+         host_wpm, guest_wpm,
+         host_accuracy, guest_accuracy,
+         host_finished, guest_finished
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        stateAtEnd.roomId,
+        Date.now(),
+        result.endReason,
+        result.outcome,
+        stateAtEnd.passage.id,
+        stateAtEnd.config.passageLength,
+        stateAtEnd.passage.wordCount,
+        duration,
+        result.host.wpm,
+        result.guest.wpm,
+        result.host.accuracy,
+        result.guest.accuracy,
+        result.host.finishedPassage ? 1 : 0,
+        result.guest.finishedPassage ? 1 : 0
+      )
+      .run();
   }
 
   private async startRematch(): Promise<void> {
