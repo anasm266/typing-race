@@ -230,7 +230,7 @@ Ideas worth remembering but out of scope for first ship. Revisit only after v1 i
 - **WPM graph:** **Recharts** (nicer defaults, pairs well with dark Monkeytype-style UI)
 - **Passages:** Curated static list in `/passages/` (~50 passages, varied lengths, Monkeytype-style prose). No API dep, deterministic for tests.
 - **Page refresh mid-race:** Auto-reconnect with session token stored in `sessionStorage`. 30s grace window on the server. If refresh succeeds inside grace, race resumes. If grace expires, opponent sees "declare win / wait / end" options.
-- **Visual style:** Monkeytype-inspired — dark background, mono font (JetBrains Mono or Geist Mono), minimal chrome, single accent color for correct-char highlight, red for errors.
+- **Visual style:** Monkeytype-*inspired layout* (dark bg, mono font, minimal chrome, single accent for correct-char highlight) but **own color identity** — **not** MT's signature yellow. Palette: near-black bg `#0a0a0b`, electric cyan accent `#22d3ee`, red for errors, green for ok/correct.
 
 ## 11. Still to decide (not blockers, punt when relevant)
 

@@ -1,12 +1,15 @@
 :root {
-  --bg: #0f0f10;
-  --bg-soft: #18181a;
-  --fg: #d1d0c5;
-  --fg-dim: #646669;
-  --accent: #e2b714;
-  --accent-dim: #8a6d0c;
-  --error: #ca4754;
-  --ok: #7cb342;
+  --bg: #0a0a0b;
+  --bg-soft: #151517;
+  --bg-soft-2: #1f1f22;
+  --border: #2a2a2e;
+  --fg: #e5e5e5;
+  --fg-dim: #6b6b6b;
+  --accent: #22d3ee;
+  --accent-dim: #0891b2;
+  --accent-glow: rgba(34, 211, 238, 0.15);
+  --error: #ef4444;
+  --ok: #22c55e;
 
   font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular,
     Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -29,11 +32,16 @@ body,
   color: var(--fg);
 }
 
+::selection {
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
 button {
   font: inherit;
   color: inherit;
   background: transparent;
-  border: 1px solid var(--fg-dim);
+  border: 1px solid var(--border);
   padding: 0.5rem 1rem;
   cursor: pointer;
   transition: border-color 120ms, color 120ms;
