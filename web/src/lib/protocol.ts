@@ -89,7 +89,13 @@ export type ClientMsg =
       wpm: number;
       accuracy: number;
     }
-  | { t: "finished"; wpm: number; accuracy: number; elapsedMs: number }
+  | {
+      t: "finished";
+      wpm: number;
+      accuracy: number;
+      elapsedMs: number;
+      correctCount: number;
+    }
   | { t: "rematch_request" }
   | { t: "rematch_cancel" };
 

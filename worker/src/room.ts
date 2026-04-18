@@ -349,9 +349,16 @@ export class Room extends DurableObject<Env> {
         const att = ws.deserializeAttachment() as Attachment | null;
         if (!att) return;
 
+        // Client reached the end of the passage. Typos are allowed — the
+        // reported correctCount reflects actual accuracy, not a perfect run.
+        const passageLen = this.state.passage.text.length;
+        const correctCount = Math.max(
+          0,
+          Math.min(passageLen, msg.correctCount)
+        );
         const finalProgress: PlayerProgress = {
-          pos: this.state.passage.text.length,
-          correctCount: this.state.passage.text.length,
+          pos: passageLen,
+          correctCount,
           wpm: msg.wpm,
           accuracy: msg.accuracy,
           at: Date.now(),

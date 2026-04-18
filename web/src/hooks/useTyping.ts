@@ -82,12 +82,15 @@ export function useTyping(
     return () => window.clearInterval(id);
   }, [active, passage]);
 
+  // Race ends as soon as the cursor hits the end of the passage — typos
+  // included. Wrong chars stay red, WPM/accuracy absorb the penalty, but
+  // the race doesn't get stuck waiting for a character-perfect match.
   useEffect(() => {
     if (endedAt !== null) return;
-    if (typed.length === passage.length && typed === passage) {
+    if (typed.length >= passage.length) {
       setEndedAt(Date.now());
     }
-  }, [typed, passage, endedAt]);
+  }, [typed.length, passage.length, endedAt]);
 
   const handleKey = useCallback(
     (key: string) => {
