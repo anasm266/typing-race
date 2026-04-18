@@ -182,8 +182,8 @@ server → client:
 |---|---|---|---|
 | M0 | Skeleton | Vite app + empty Worker deployed at live URL, both pingable | ✅ done |
 | M1 | Single-player offline typing | Can type through a passage locally, WPM shown | ✅ done |
-| M2 | Rooms + WebSocket join | Two browsers can join same room, basic "hello" echo | ⏭ next |
-| M3 | Live cursor sync | Both browsers see each other's cursor moving in real time | |
+| M2 | Rooms + WebSocket join | Two browsers can join same room, basic "hello" echo | ✅ done |
+| M3 | Live cursor sync | Both browsers see each other's cursor moving in real time | ⏭ next |
 | M4 | Countdown + race end + winner | Full race loop works, winner declared | |
 | M5 | WPM graph + rematch | Post-race screen shows graph, rematch button works | |
 | M6 | Disconnect handling + expiry | Drop wifi mid-race → UI handles it gracefully | |
