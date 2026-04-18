@@ -37,8 +37,13 @@ export function EndScreen({
     !!room.rematchReady &&
     room.rematchReady[role === "host" ? "guest" : "host"];
 
+  // Rematch only makes sense if both players are currently connected.
+  // A disconnect forfeit that later reconnects (via their session token)
+  // should re-enable rematch — only the live WS count matters.
+  const rivalPresent = room.playerCount >= 2;
+
   // Keep local "requested" in sync with server echo, so if server clears
-  // (e.g., after cancel) we track it too.
+  // (e.g., after cancel or rival leave) we track it too.
   useEffect(() => {
     setRequested(iAmReady);
   }, [iAmReady]);
@@ -47,6 +52,10 @@ export function EndScreen({
     function onKey(e: KeyboardEvent) {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
+        if (!rivalPresent) {
+          onNewRace();
+          return;
+        }
         if (requested) {
           onRematchCancel();
         } else {
@@ -56,7 +65,7 @@ export function EndScreen({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [requested, onRematchRequest, onRematchCancel]);
+  }, [requested, rivalPresent, onRematchRequest, onRematchCancel, onNewRace]);
 
   if (!result) {
     return (
@@ -121,6 +130,7 @@ export function EndScreen({
         <RematchControls
           requested={requested}
           opponentReady={opponentReady}
+          rivalPresent={rivalPresent}
           onRequest={onRematchRequest}
           onCancel={onRematchCancel}
           onNewRace={onNewRace}
@@ -135,6 +145,7 @@ export function EndScreen({
 interface RematchControlsProps {
   requested: boolean;
   opponentReady: boolean;
+  rivalPresent: boolean;
   onRequest: () => void;
   onCancel: () => void;
   onNewRace: () => void;
@@ -143,10 +154,46 @@ interface RematchControlsProps {
 function RematchControls({
   requested,
   opponentReady,
+  rivalPresent,
   onRequest,
   onCancel,
   onNewRace,
 }: RematchControlsProps) {
+  // Rival is gone — rematch is impossible. Show only "new race" and
+  // explain why. (Server auto-clears the leaver's rematchReady on
+  // disconnect, so if a stale requested=true sneaks through we just
+  // ignore it.)
+  if (!rivalPresent) {
+    return (
+      <>
+        <div className="flex items-center gap-4">
+          <button
+            disabled
+            className="px-6 py-2 border border-border text-fg-dimmer cursor-not-allowed"
+            aria-disabled="true"
+            title="rival disconnected"
+          >
+            rematch unavailable
+          </button>
+          <button
+            onClick={onNewRace}
+            className="px-6 py-2 border border-accent text-accent hover:bg-accent hover:text-bg transition-colors"
+          >
+            new race
+          </button>
+        </div>
+
+        <div className="text-xs text-opponent min-h-[1em] flex items-center gap-1.5">
+          <span className="inline-block size-1.5 rounded-full bg-opponent" />
+          rival disconnected · can't rematch without them
+        </div>
+        <div className="text-[0.65rem] text-fg-dimmer">
+          press <span className="text-fg-dim">enter</span> to start a new race
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="flex items-center gap-4">
