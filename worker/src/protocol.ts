@@ -37,6 +37,18 @@ export interface DisconnectInfo {
   graceUntil: number;
 }
 
+/**
+ * Finish-mode grace: the first player crossed the line, the race is
+ * still running so the other can complete too, but a timer is now
+ * ticking. When it expires, the race ends with the first finisher
+ * as the winner.
+ */
+export interface FinishGraceInfo {
+  firstFinisher: PlayerRole;
+  at: number;
+  graceUntil: number;
+}
+
 export interface PlayerResult {
   role: PlayerRole;
   wpm: number;
@@ -76,6 +88,11 @@ export interface PublicRoomState {
   rematchReady?: RematchReady;
   /** Set while a player is disconnected mid-race and grace is counting down. */
   disconnected?: DisconnectInfo;
+  /**
+   * In finish mode, after the first player reaches the end, the other
+   * player gets this long to finish before the race auto-ends.
+   */
+  finishGrace?: FinishGraceInfo;
 }
 
 /** Client → Server messages */
@@ -136,6 +153,9 @@ export const START_BUFFER_MS = 3000;
 
 /** Grace period when a player drops mid-race before they forfeit. */
 export const DISCONNECT_GRACE_MS = 30_000;
+
+/** In finish mode, how long the second player has to finish after the first. */
+export const FINISH_GRACE_MS = 10_000;
 
 /** A room with zero connected players expires this long after the last leave. */
 export const ROOM_EXPIRY_MS = 10 * 60 * 1000;

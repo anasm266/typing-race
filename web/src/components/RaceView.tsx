@@ -5,6 +5,7 @@ import { EndScreen } from "./EndScreen";
 import { calcAccuracy, formatElapsed, type WpmSample } from "../lib/wpm";
 import type {
   ClientMsg,
+  FinishGraceInfo,
   PlayerRole,
   PublicRoomState,
 } from "../lib/protocol";
@@ -153,8 +154,26 @@ export function RaceView({
     opponentProgress?.pos ??
     (opponentFinish ? passage.text.length : undefined);
 
+  const myRoleDone = typing.state === "done";
+  const finishGraceForMe: FinishGraceInfo | null =
+    room.finishGrace && role
+      ? room.finishGrace.firstFinisher === role
+        ? room.finishGrace // I'm the one who finished first
+        : room.finishGrace // rival finished first; I'm racing the clock
+      : null;
+
   return (
     <div className="flex flex-col items-center gap-8 w-full max-w-[800px]">
+      {finishGraceForMe && (
+        <FinishGraceBanner
+          grace={finishGraceForMe}
+          iFinishedFirst={
+            !!role && finishGraceForMe.firstFinisher === role
+          }
+          now={now}
+        />
+      )}
+
       {status === "starting" ? (
         <Countdown startAt={startAt} now={now} />
       ) : (
@@ -170,7 +189,7 @@ export function RaceView({
           opponentWpm={
             opponentProgress?.wpm ?? opponentFinish?.wpm ?? null
           }
-          selfDone={typing.state === "done"}
+          selfDone={myRoleDone}
           opponentDone={!!opponentFinish}
         />
       )}
@@ -183,10 +202,55 @@ export function RaceView({
 
       <FooterHint
         status={status}
-        selfDone={typing.state === "done"}
+        selfDone={myRoleDone}
         opponentDone={!!opponentFinish}
         endMode={config.endMode}
+        hasFinishGrace={!!room.finishGrace}
       />
+    </div>
+  );
+}
+
+/* -------------------- finish grace banner -------------------- */
+
+function FinishGraceBanner({
+  grace,
+  iFinishedFirst,
+  now,
+}: {
+  grace: FinishGraceInfo;
+  iFinishedFirst: boolean;
+  now: number;
+}) {
+  const remaining = Math.max(
+    0,
+    Math.ceil((grace.graceUntil - now) / 1000)
+  );
+  return (
+    <div className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-accent/40 bg-accent/5">
+      <span className="inline-block size-1.5 rounded-full bg-accent animate-pulse" />
+      <span className="text-sm">
+        {iFinishedFirst ? (
+          <>
+            <span className="text-accent">you finished first</span>
+            <span className="text-fg-dim">
+              {" "}
+              · waiting for rival to complete
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-opponent">rival finished</span>
+            <span className="text-fg-dim">
+              {" "}
+              · finish your passage to see full results
+            </span>
+          </>
+        )}
+      </span>
+      <span className="text-sm tabular-nums text-fg">
+        {remaining}s
+      </span>
     </div>
   );
 }
@@ -342,11 +406,13 @@ function FooterHint({
   selfDone,
   opponentDone,
   endMode,
+  hasFinishGrace,
 }: {
   status: PublicRoomState["status"];
   selfDone: boolean;
   opponentDone: boolean;
   endMode: "finish" | "time";
+  hasFinishGrace: boolean;
 }) {
   if (status === "starting") {
     return (
@@ -355,6 +421,10 @@ function FooterHint({
       </div>
     );
   }
+  // In finish mode the prominent banner at the top already explains
+  // what's happening — keep the footer quiet so the UI doesn't shout.
+  if (hasFinishGrace) return null;
+
   if (endMode === "time" && selfDone) {
     return (
       <div className="text-xs text-ok">

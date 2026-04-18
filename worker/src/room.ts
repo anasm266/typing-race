@@ -13,6 +13,7 @@ import type {
 } from "./protocol";
 import {
   DISCONNECT_GRACE_MS,
+  FINISH_GRACE_MS,
   ROOM_EXPIRY_MS,
   START_BUFFER_MS,
 } from "./protocol";
@@ -386,7 +387,31 @@ export class Room extends DurableObject<Env> {
         });
 
         if (this.state.config.endMode === "finish") {
-          await this.endRace("finish");
+          const hostDone = this.state._hostFinishedAt !== undefined;
+          const guestDone = this.state._guestFinishedAt !== undefined;
+
+          if (hostDone && guestDone) {
+            // Both players crossed the line — end race now.
+            await this.endRace("finish");
+          } else if (!this.state.finishGrace) {
+            // First finisher: broadcast a grace timer so the second can
+            // complete and see their own stats. Auto-ends if they don't.
+            this.state = {
+              ...this.state,
+              finishGrace: {
+                firstFinisher: att.role,
+                at: Date.now(),
+                graceUntil: Date.now() + FINISH_GRACE_MS,
+              },
+            };
+            await this.persistState();
+            await this.rescheduleAlarm();
+            this.broadcast({ t: "state", room: toPublic(this.state) });
+          } else {
+            // finishGrace already set — just broadcast updated state
+            // (with this player's finishedAt now populated).
+            this.broadcast({ t: "state", room: toPublic(this.state) });
+          }
         }
         return;
       }
@@ -549,6 +574,9 @@ export class Room extends DurableObject<Env> {
     if (s.status === "racing" && s.disconnected) {
       candidates.push(s.disconnected.graceUntil);
     }
+    if (s.status === "racing" && s.finishGrace) {
+      candidates.push(s.finishGrace.graceUntil);
+    }
     if (s.status === "racing" && s.endAt) {
       candidates.push(s.endAt);
     }
@@ -617,6 +645,17 @@ export class Room extends DurableObject<Env> {
       return;
     }
 
+    // Finish-mode second-finisher grace elapsed → end race with first
+    // finisher as winner.
+    if (
+      this.state.status === "racing" &&
+      this.state.finishGrace &&
+      now >= this.state.finishGrace.graceUntil
+    ) {
+      await this.endRace("finish");
+      return;
+    }
+
     // Time-mode timer elapsed → end race.
     if (
       this.state.status === "racing" &&
@@ -645,6 +684,7 @@ export class Room extends DurableObject<Env> {
       status: "ended",
       result,
       disconnected: undefined,
+      finishGrace: undefined,
     };
     await this.persistState();
     await this.rescheduleAlarm();
