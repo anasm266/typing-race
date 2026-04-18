@@ -3,6 +3,15 @@ import { calcWpm, type WpmSample } from "../lib/wpm";
 
 export type TypingState = "idle" | "typing" | "done";
 
+export interface UseTypingOptions {
+  /**
+   * If provided, timer starts from this ms timestamp regardless of keystrokes.
+   * (Used by multiplayer races with a server-anchored start time.)
+   * If omitted, timer auto-starts on first keystroke (single-player behavior).
+   */
+  startAt?: number;
+}
+
 export interface UseTypingResult {
   state: TypingState;
   passage: string;
@@ -10,18 +19,32 @@ export interface UseTypingResult {
   correctChars: number;
   totalKeystrokes: number;
   elapsedMs: number;
+  wpm: number;
   wpmSamples: WpmSample[];
   handleKey: (key: string) => void;
   reset: () => void;
 }
 
-export function useTyping(passage: string): UseTypingResult {
+export function useTyping(
+  passage: string,
+  options: UseTypingOptions = {}
+): UseTypingResult {
+  const { startAt: startAtOverride } = options;
+
   const [typed, setTyped] = useState("");
-  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(
+    startAtOverride ?? null
+  );
   const [endedAt, setEndedAt] = useState<number | null>(null);
   const [totalKeystrokes, setTotalKeystrokes] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [samples, setSamples] = useState<WpmSample[]>([]);
+
+  // If the external startAt changes (race transitions), adopt it.
+  useEffect(() => {
+    if (startAtOverride === undefined) return;
+    setStartedAt(startAtOverride);
+  }, [startAtOverride]);
 
   const active = startedAt !== null && endedAt === null;
 
@@ -41,15 +64,19 @@ export function useTyping(passage: string): UseTypingResult {
     const id = window.setInterval(() => {
       const start = startedAtRef.current;
       if (start === null) return;
+      const elapsedMs = Date.now() - start;
+      if (elapsedMs <= 0) return;
       const t = typedRef.current;
       let correct = 0;
       for (let i = 0; i < t.length; i++) {
         if (t[i] === passage[i]) correct++;
       }
-      const elapsedMs = Date.now() - start;
       setSamples((s) => [
         ...s,
-        { t: Math.round((elapsedMs / 1000) * 10) / 10, wpm: calcWpm(correct, elapsedMs) },
+        {
+          t: Math.round((elapsedMs / 1000) * 10) / 10,
+          wpm: calcWpm(correct, elapsedMs),
+        },
       ]);
     }, 1000);
     return () => window.clearInterval(id);
@@ -83,20 +110,22 @@ export function useTyping(passage: string): UseTypingResult {
 
   const reset = useCallback(() => {
     setTyped("");
-    setStartedAt(null);
+    setStartedAt(startAtOverride ?? null);
     setEndedAt(null);
     setTotalKeystrokes(0);
     setSamples([]);
     setNow(Date.now());
-  }, []);
+  }, [startAtOverride]);
 
   let correctChars = 0;
   for (let i = 0; i < typed.length; i++) {
     if (typed[i] === passage[i]) correctChars++;
   }
 
-  const elapsedMs =
+  const rawElapsed =
     startedAt === null ? 0 : (endedAt ?? now) - startedAt;
+  const elapsedMs = Math.max(0, rawElapsed);
+  const wpm = calcWpm(correctChars, elapsedMs);
 
   const state: TypingState =
     endedAt !== null ? "done" : startedAt !== null ? "typing" : "idle";
@@ -108,6 +137,7 @@ export function useTyping(passage: string): UseTypingResult {
     correctChars,
     totalKeystrokes,
     elapsedMs,
+    wpm,
     wpmSamples: samples,
     handleKey,
     reset,

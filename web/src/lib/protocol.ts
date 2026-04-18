@@ -21,8 +21,7 @@ export interface PassageInfo {
 
 export type RoomStatus =
   | "waiting"
-  | "ready"
-  | "locked"
+  | "starting"
   | "racing"
   | "ended";
 
@@ -33,18 +32,31 @@ export interface PublicRoomState {
   status: RoomStatus;
   playerCount: number;
   createdAt: number;
+  /** ms timestamp when racing begins (server clock). Set when 2nd player joins. */
+  startAt?: number;
+}
+
+/** Progress update sent frequently during a race. */
+export interface Progress {
+  pos: number;
+  correctCount: number;
+  wpm: number;
 }
 
 /** Client → Server messages */
 export type ClientMsg =
   | { t: "hello" }
-  | { t: "ping" };
+  | { t: "ping" }
+  | { t: "progress"; pos: number; correctCount: number; wpm: number }
+  | { t: "finished"; wpm: number; accuracy: number; elapsedMs: number };
 
 /** Server → Client messages */
 export type ServerMsg =
   | { t: "state"; room: PublicRoomState }
   | { t: "peer_joined"; playerCount: number }
   | { t: "peer_left"; playerCount: number }
+  | { t: "opponent_progress"; pos: number; correctCount: number; wpm: number }
+  | { t: "opponent_finished"; wpm: number; accuracy: number; elapsedMs: number }
   | { t: "error"; code: string; message: string }
   | { t: "pong" };
 
@@ -62,3 +74,6 @@ export const DEFAULT_CONFIG: RoomConfig = {
   passageLength: "medium",
   timeLimit: 60,
 };
+
+/** How long the "get ready" buffer is between 2nd player joining and race starting. */
+export const START_BUFFER_MS = 2000;

@@ -100,12 +100,13 @@ Everything runs on Cloudflare's free tier. No credit card required.
 
 ## Project status
 
-Current milestone: **M3 (live cursor sync)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
+Current milestone: **M4 (countdown + winner)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
 
 **Done:**
 - M0 · scaffold · Vite+React frontend and Cloudflare Worker both deployed with end-to-end health check.
 - M1 · single-player typing · curated passages, live WPM/accuracy, char-by-char highlighting with blinking cyan caret, Tab loads next passage, end screen shows final stats.
 - M2 · rooms + WebSocket join · Durable Objects per room with hibernation, share-link lobby, auto-selected URL + copy button, config picker (length/end-mode/time-limit), proper error screens for expired and full rooms.
+- M3 · live cursor sync · auto-start with 2s buffer via DO alarm, progress broadcast on every keystroke, opponent cursor rendered in pink on the shared passage, live opponent WPM displayed.
 
 ## License
 

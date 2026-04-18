@@ -10,6 +10,9 @@
   --color-fg-dimmer: #3f3f42;
   --color-accent: #22d3ee;
   --color-accent-dim: #0891b2;
+  --color-opponent: #f472b6;
+  --color-opponent-dim: #9d174d;
+  --color-opponent-glow: rgba(244, 114, 182, 0.18);
   --color-error: #ef4444;
   --color-error-soft: rgba(239, 68, 68, 0.18);
   --color-ok: #22c55e;
@@ -63,6 +66,19 @@ body {
   background: var(--color-accent);
   box-shadow: 0 0 8px var(--color-accent);
   animation: caretBlink 1s steps(2, start) infinite;
+}
+
+.passage-char[data-opponent="true"]::after {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 8%;
+  bottom: 8%;
+  width: 2px;
+  background: var(--color-opponent);
+  box-shadow: 0 0 8px var(--color-opponent);
+  opacity: 0.75;
+  transition: opacity 80ms linear;
 }
 
 .passage-char[data-wrong="true"] {

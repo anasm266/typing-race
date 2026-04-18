@@ -12,10 +12,24 @@ export type ConnectionState =
   | "closed"
   | "error";
 
+export interface OpponentProgress {
+  pos: number;
+  correctCount: number;
+  wpm: number;
+}
+
+export interface OpponentFinish {
+  wpm: number;
+  accuracy: number;
+  elapsedMs: number;
+}
+
 export interface UseRoomResult {
   roomState: PublicRoomState | null;
   connectionState: ConnectionState;
   error: string | null;
+  opponentProgress: OpponentProgress | null;
+  opponentFinish: OpponentFinish | null;
   send: (msg: ClientMsg) => void;
 }
 
@@ -26,12 +40,18 @@ export function useRoom(roomId: string): UseRoomResult {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [opponentProgress, setOpponentProgress] =
+    useState<OpponentProgress | null>(null);
+  const [opponentFinish, setOpponentFinish] =
+    useState<OpponentFinish | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     setConnectionState("connecting");
     setError(null);
     setRoomState(null);
+    setOpponentProgress(null);
+    setOpponentFinish(null);
 
     const ws = new WebSocket(roomWsUrl(roomId));
     wsRef.current = ws;
@@ -52,9 +72,27 @@ export function useRoom(roomId: string): UseRoomResult {
       switch (msg.t) {
         case "state":
           setRoomState(msg.room);
+          if (msg.room.status === "starting" || msg.room.status === "waiting") {
+            setOpponentProgress(null);
+            setOpponentFinish(null);
+          }
           return;
         case "error":
           setError(msg.code);
+          return;
+        case "opponent_progress":
+          setOpponentProgress({
+            pos: msg.pos,
+            correctCount: msg.correctCount,
+            wpm: msg.wpm,
+          });
+          return;
+        case "opponent_finished":
+          setOpponentFinish({
+            wpm: msg.wpm,
+            accuracy: msg.accuracy,
+            elapsedMs: msg.elapsedMs,
+          });
           return;
         case "peer_joined":
         case "peer_left":
@@ -91,5 +129,12 @@ export function useRoom(roomId: string): UseRoomResult {
     ws.send(JSON.stringify(msg));
   }, []);
 
-  return { roomState, connectionState, error, send };
+  return {
+    roomState,
+    connectionState,
+    error,
+    opponentProgress,
+    opponentFinish,
+    send,
+  };
 }

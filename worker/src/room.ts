@@ -6,6 +6,7 @@ import type {
   RoomConfig,
   ServerMsg,
 } from "./protocol";
+import { START_BUFFER_MS } from "./protocol";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
@@ -65,7 +66,7 @@ export class Room extends DurableObject<Env> {
       playerCount: 0,
       createdAt: Date.now(),
     };
-    await this.ctx.storage.put("state", this.roomState);
+    await this.persistState();
     return Response.json({ ok: true });
   }
 
@@ -78,9 +79,6 @@ export class Room extends DurableObject<Env> {
     const client = pair[0];
     const server = pair[1];
 
-    // Always upgrade first so the client can distinguish specific errors
-    // via the in-band {t:"error"} message + close code, rather than getting
-    // a generic 1006 on a failed HTTP upgrade.
     if (!this.roomState) {
       server.accept();
       this.safeSend(server, {
@@ -93,10 +91,6 @@ export class Room extends DurableObject<Env> {
     }
 
     const existing = this.ctx.getWebSockets();
-    console.log(
-      `[room ${this.roomState.roomId}] upgrade: existing=${existing.length}`
-    );
-
     if (existing.length >= 2) {
       server.accept();
       this.safeSend(server, {
@@ -121,9 +115,19 @@ export class Room extends DurableObject<Env> {
     this.roomState = {
       ...this.roomState,
       playerCount: newCount,
-      status: newCount === 2 ? "ready" : "waiting",
     };
-    await this.ctx.storage.put("state", this.roomState);
+
+    if (newCount === 2 && this.roomState.status === "waiting") {
+      const startAt = Date.now() + START_BUFFER_MS;
+      this.roomState = {
+        ...this.roomState,
+        status: "starting",
+        startAt,
+      };
+      await this.ctx.storage.setAlarm(startAt);
+    }
+
+    await this.persistState();
 
     this.safeSend(server, { t: "state", room: this.roomState });
 
@@ -136,6 +140,16 @@ export class Room extends DurableObject<Env> {
     }
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Fires when the pre-race buffer elapses: transition to racing. */
+  async alarm(): Promise<void> {
+    if (!this.roomState) return;
+    if (this.roomState.status !== "starting") return;
+
+    this.roomState = { ...this.roomState, status: "racing" };
+    await this.persistState();
+    this.broadcast({ t: "state", room: this.roomState });
   }
 
   async webSocketMessage(
@@ -155,10 +169,31 @@ export class Room extends DurableObject<Env> {
       case "ping":
         this.safeSend(ws, { t: "pong" });
         return;
+
       case "hello":
         if (this.roomState) {
           this.safeSend(ws, { t: "state", room: this.roomState });
         }
+        return;
+
+      case "progress":
+        if (this.roomState?.status !== "racing") return;
+        this.broadcastExcept(ws, {
+          t: "opponent_progress",
+          pos: msg.pos,
+          correctCount: msg.correctCount,
+          wpm: msg.wpm,
+        });
+        return;
+
+      case "finished":
+        if (this.roomState?.status !== "racing") return;
+        this.broadcastExcept(ws, {
+          t: "opponent_finished",
+          wpm: msg.wpm,
+          accuracy: msg.accuracy,
+          elapsedMs: msg.elapsedMs,
+        });
         return;
     }
   }
@@ -189,19 +224,24 @@ export class Room extends DurableObject<Env> {
 
   private async handleDisconnect(closing: WebSocket): Promise<void> {
     if (!this.roomState) return;
-    const all = this.ctx.getWebSockets();
-    const remaining = all.filter((s) => s !== closing).length;
-    console.log(
-      `[room ${this.roomState.roomId}] disconnect: all=${all.length} remaining=${remaining}`
-    );
+    const remaining = this.ctx
+      .getWebSockets()
+      .filter((s) => s !== closing).length;
+
+    const nextStatus: PublicRoomState["status"] =
+      remaining < 2 && this.roomState.status === "starting"
+        ? "waiting"
+        : this.roomState.status;
+
     this.roomState = {
       ...this.roomState,
       playerCount: remaining,
-      status: remaining < 2 ? "waiting" : this.roomState.status,
+      status: nextStatus,
+      startAt: nextStatus === "waiting" ? undefined : this.roomState.startAt,
     };
-    await this.ctx.storage.put("state", this.roomState);
+    await this.persistState();
 
-    for (const other of all) {
+    for (const other of this.ctx.getWebSockets()) {
       if (other === closing) continue;
       this.safeSend(other, {
         t: "peer_left",
@@ -209,6 +249,24 @@ export class Room extends DurableObject<Env> {
       });
       this.safeSend(other, { t: "state", room: this.roomState });
     }
+  }
+
+  private broadcast(msg: ServerMsg): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      this.safeSend(ws, msg);
+    }
+  }
+
+  private broadcastExcept(except: WebSocket, msg: ServerMsg): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === except) continue;
+      this.safeSend(ws, msg);
+    }
+  }
+
+  private async persistState(): Promise<void> {
+    if (!this.roomState) return;
+    await this.ctx.storage.put("state", this.roomState);
   }
 
   private safeSend(ws: WebSocket, msg: ServerMsg): void {
