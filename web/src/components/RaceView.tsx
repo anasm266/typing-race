@@ -119,6 +119,7 @@ export function RaceView({
         typing.totalKeystrokes
       ),
       elapsedMs: typing.elapsedMs,
+      correctCount: typing.correctChars,
     });
   }, [
     typing.state,

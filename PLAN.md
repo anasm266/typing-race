@@ -33,16 +33,17 @@ Core race loop:
 - [ ] US-14 Expired/invalid room screens
 
 Quality / infra (the stuff recruiters actually notice):
-- [ ] Deployed at a live URL that works on mobile + desktop
-- [ ] README with architecture diagram + design decisions
-- [ ] 30s demo GIF at top of README
-- [ ] Basic integration tests (WebSocket sync happy path)
-- [ ] Sentry error tracking wired on FE + BE
-- [ ] Uptime monitor (Better Stack) linked from README
-- [ ] k6 load test script + screenshot of results in README
-- [ ] CI: GitHub Actions runs tests on PR, deploys on merge to main
-- [ ] Reconnection logic (player's wifi blips → race resumes, not instant loss)
-- [ ] Public `/recent` page showing last ~20 completed races (leaderboard-lite)
+- [x] Deployed at a live URL that works on mobile + desktop
+- [x] README with architecture diagram + design decisions
+- [ ] 30s demo GIF at top of README  *(M9)*
+- [ ] Basic integration tests (WebSocket sync happy path)  *(deferred)*
+- [x] Sentry error tracking wired on FE + BE
+- [x] Uptime monitor (Better Stack) linked from README
+- [x] k6 load test script — written
+- [ ] **k6 run captured in README**  *(M9: actually execute the script and paste the summary screenshot)*
+- [ ] CI: GitHub Actions runs tests on PR, deploys on merge to main  *(deferred)*
+- [x] Reconnection logic (player's wifi blips → race resumes, not instant loss)
+- [x] Public `/recent` page showing last ~20 completed races (leaderboard-lite)
 
 ### v1.1 — polish (after MVP works end-to-end)
 
@@ -189,7 +190,7 @@ server → client:
 | M6 | Disconnect handling + expiry | Drop wifi mid-race → UI handles it gracefully | ✅ done |
 | M7 | Leaderboard + polish | `/recent` page live, README has GIF + k6 screenshot | ✅ done |
 | M8 | Waveform + trash talk | v1.1 polish features shipped | ⏭ next |
-| M9 | Final QA | Mobile works, accessibility pass done, Sentry quiet | |
+| M9 | Final QA | Mobile works, a11y pass, **k6 run captured in README**, demo GIF recorded, Sentry smoke-tested | |
 
 ---
 
