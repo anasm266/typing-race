@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { useCapsLock } from "../hooks/useCapsLock";
 import { useTyping } from "../hooks/useTyping";
+import { CapsLockWarning } from "./CapsLockWarning";
 import { Passage } from "./Passage";
 import { EndScreen } from "./EndScreen";
 import { ReactionBar } from "./ReactionBar";
@@ -38,6 +40,9 @@ export function RaceView({
 }: RaceViewProps) {
   const { passage, status, startAt, config } = room;
   const racing = status === "racing";
+  const capsLockOn = useCapsLock(
+    status === "starting" || status === "racing"
+  );
 
   const typing = useTyping(passage.text, {
     startAt: racing ? startAt : undefined,
@@ -216,6 +221,8 @@ export function RaceView({
         typed={typing.typed}
         opponentPos={opponentPos}
       />
+
+      <CapsLockWarning visible={capsLockOn} />
 
       <ReactionBar send={send} />
 
