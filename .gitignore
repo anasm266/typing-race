@@ -19,6 +19,10 @@ wrangler.toml.bak
 .env.local
 .env.*.local
 *.local
+secrets.txt
+secrets.*
+notes.txt
+scratch.txt
 
 # Logs
 npm-debug.log*
