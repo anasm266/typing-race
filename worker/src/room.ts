@@ -1025,16 +1025,7 @@ function computeResult(
 
   let outcome: RaceOutcome;
   if (endReason === "finish") {
-    if (hostFinished && !guestFinished) outcome = "host_wins";
-    else if (guestFinished && !hostFinished) outcome = "guest_wins";
-    else if (hostFinished && guestFinished) {
-      outcome =
-        (s._hostFinishedAt ?? 0) <= (s._guestFinishedAt ?? 0)
-          ? "host_wins"
-          : "guest_wins";
-    } else {
-      outcome = "tie";
-    }
+    outcome = compareFinishMode(s, hostResult, guestResult);
   } else if (endReason === "disconnect") {
     // The player who disconnected forfeits; the other wins.
     if (s.disconnected?.role === "host") outcome = "guest_wins";
@@ -1054,4 +1045,45 @@ function computeResult(
   }
 
   return { outcome, endReason, host: hostResult, guest: guestResult };
+}
+
+function compareFinishMode(
+  s: InternalState,
+  host: PlayerResult,
+  guest: PlayerResult
+): RaceOutcome {
+  const hostScore = finishModeScore(host);
+  const guestScore = finishModeScore(guest);
+  const scoreDelta = hostScore - guestScore;
+
+  if (Math.abs(scoreDelta) > 0.01) {
+    return scoreDelta > 0 ? "host_wins" : "guest_wins";
+  }
+
+  if (host.finishedPassage !== guest.finishedPassage) {
+    return host.finishedPassage ? "host_wins" : "guest_wins";
+  }
+
+  if (host.correctCount !== guest.correctCount) {
+    return host.correctCount > guest.correctCount
+      ? "host_wins"
+      : "guest_wins";
+  }
+
+  const hostFinishedAt = s._hostFinishedAt ?? Number.POSITIVE_INFINITY;
+  const guestFinishedAt = s._guestFinishedAt ?? Number.POSITIVE_INFINITY;
+  if (hostFinishedAt !== guestFinishedAt) {
+    return hostFinishedAt < guestFinishedAt ? "host_wins" : "guest_wins";
+  }
+
+  if (host.elapsedMs !== guest.elapsedMs) {
+    return host.elapsedMs < guest.elapsedMs ? "host_wins" : "guest_wins";
+  }
+
+  return "tie";
+}
+
+function finishModeScore(result: PlayerResult): number {
+  const accuracyWeight = result.accuracy / 100;
+  return result.wpm * accuracyWeight * accuracyWeight;
 }
