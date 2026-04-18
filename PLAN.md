@@ -185,8 +185,8 @@ server → client:
 | M2 | Rooms + WebSocket join | Two browsers can join same room, basic "hello" echo | ✅ done |
 | M3 | Live cursor sync | Both browsers see each other's cursor moving in real time | ✅ done |
 | M4 | Countdown + race end + winner | Full race loop works, winner declared | ✅ done |
-| M5 | WPM graph + rematch | Post-race screen shows graph, rematch button works | ⏭ next |
-| M6 | Disconnect handling + expiry | Drop wifi mid-race → UI handles it gracefully | |
+| M5 | WPM graph + rematch | Post-race screen shows graph, rematch button works | ✅ done |
+| M6 | Disconnect handling + expiry | Drop wifi mid-race → UI handles it gracefully | ⏭ next |
 | M7 | Leaderboard + polish | `/recent` page live, README has GIF + k6 screenshot | |
 | M8 | Waveform + trash talk | v1.1 polish features shipped | |
 | M9 | Final QA | Mobile works, accessibility pass done, Sentry quiet | |

@@ -100,7 +100,7 @@ Everything runs on Cloudflare's free tier. No credit card required.
 
 ## Project status
 
-Current milestone: **M5 (WPM graph + rematch)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
+Current milestone: **M6 (disconnect handling)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
 
 **Done:**
 - M0 · scaffold · Vite+React frontend and Cloudflare Worker both deployed with end-to-end health check.
@@ -108,6 +108,7 @@ Current milestone: **M5 (WPM graph + rematch)** — next. See [`PLAN.md` §7](./
 - M2 · rooms + WebSocket join · Durable Objects per room with hibernation, share-link lobby, auto-selected URL + copy button, config picker (length/end-mode/time-limit), proper error screens for expired and full rooms.
 - M3 · live cursor sync · auto-start with 2s buffer via DO alarm, progress broadcast on every keystroke, opponent cursor rendered in pink on the shared passage, live opponent WPM displayed.
 - M4 · countdown + winner · animated 3-2-1-GO countdown, time-mode timer enforced via DO alarm, server-computed winner (first finisher in finish mode / higher WPM in time mode), role-aware EndScreen with win/lose/tie banner and side-by-side stats.
+- M5 · WPM graph + rematch · Recharts line chart of both players' WPM over the race window, server-driven rematch flow (both click rematch → picks a new passage, clears race state, restarts countdown), keydown-capture-level preventDefault so Space doesn't scroll during the countdown.
 
 ## License
 

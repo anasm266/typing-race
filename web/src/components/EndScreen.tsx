@@ -1,31 +1,62 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type {
   PlayerResult,
   PlayerRole,
   PublicRoomState,
   RaceResult,
 } from "../lib/protocol";
-import { formatElapsed } from "../lib/wpm";
+import { formatElapsed, type WpmSample } from "../lib/wpm";
+import { WpmGraph } from "./WpmGraph";
 
 interface EndScreenProps {
   room: PublicRoomState;
   role: PlayerRole | null;
+  mySamples: WpmSample[];
+  opponentSamples: WpmSample[];
+  onRematchRequest: () => void;
+  onRematchCancel: () => void;
   onNewRace: () => void;
 }
 
-export function EndScreen({ room, role, onNewRace }: EndScreenProps) {
+export function EndScreen({
+  room,
+  role,
+  mySamples,
+  opponentSamples,
+  onRematchRequest,
+  onRematchCancel,
+  onNewRace,
+}: EndScreenProps) {
   const result = room.result;
+  const [requested, setRequested] = useState(false);
+
+  const iAmReady =
+    !!role && !!room.rematchReady && room.rematchReady[role];
+  const opponentReady =
+    !!role &&
+    !!room.rematchReady &&
+    room.rematchReady[role === "host" ? "guest" : "host"];
+
+  // Keep local "requested" in sync with server echo, so if server clears
+  // (e.g., after cancel) we track it too.
+  useEffect(() => {
+    setRequested(iAmReady);
+  }, [iAmReady]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        onNewRace();
+        if (requested) {
+          onRematchCancel();
+        } else {
+          onRematchRequest();
+        }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onNewRace]);
+  }, [requested, onRematchRequest, onRematchCancel]);
 
   if (!result) {
     return (
@@ -45,8 +76,23 @@ export function EndScreen({ room, role, onNewRace }: EndScreenProps) {
   const me = role === "guest" ? result.guest : result.host;
   const them = role === "guest" ? result.host : result.guest;
 
+  // Truncate samples to the race window (client keeps ticking even after
+  // server ends the race, so we clip to the actual duration).
+  const raceDurationSec =
+    result.endReason === "time_up"
+      ? room.config.timeLimit
+      : Math.max(
+          result.host.elapsedMs,
+          result.guest.elapsedMs
+        ) / 1000;
+
+  const clippedMine = mySamples.filter((s) => s.t <= raceDurationSec);
+  const clippedTheirs = opponentSamples.filter(
+    (s) => s.t <= raceDurationSec
+  );
+
   return (
-    <div className="flex flex-col items-center gap-10 w-full max-w-[720px]">
+    <div className="flex flex-col items-center gap-10 w-full max-w-[760px]">
       <Banner outcome={outcome} reason={reasonLabel(result)} />
 
       <div className="grid grid-cols-[1fr_auto_1fr] gap-10 items-center w-full">
@@ -65,24 +111,91 @@ export function EndScreen({ room, role, onNewRace }: EndScreenProps) {
         />
       </div>
 
-      <div className="flex flex-col items-center gap-2">
-        <button
-          onClick={onNewRace}
-          className="px-6 py-2 border border-accent text-accent hover:bg-accent hover:text-bg transition-colors"
-        >
-          new race
-        </button>
-        <span className="text-xs text-fg-dimmer">
-          press <span className="text-fg-dim">enter</span> or{" "}
-          <span className="text-fg-dim">space</span>
-        </span>
-        <span className="text-xs text-fg-dimmer mt-2">
-          rematch (same opponent) in M5
-        </span>
+      <WpmGraph
+        mySamples={clippedMine}
+        opponentSamples={clippedTheirs}
+        raceDurationSec={raceDurationSec}
+      />
+
+      <div className="flex flex-col items-center gap-3">
+        <RematchControls
+          requested={requested}
+          opponentReady={opponentReady}
+          onRequest={onRematchRequest}
+          onCancel={onRematchCancel}
+          onNewRace={onNewRace}
+        />
       </div>
     </div>
   );
 }
+
+/* -------------------- rematch controls -------------------- */
+
+interface RematchControlsProps {
+  requested: boolean;
+  opponentReady: boolean;
+  onRequest: () => void;
+  onCancel: () => void;
+  onNewRace: () => void;
+}
+
+function RematchControls({
+  requested,
+  opponentReady,
+  onRequest,
+  onCancel,
+  onNewRace,
+}: RematchControlsProps) {
+  return (
+    <>
+      <div className="flex items-center gap-4">
+        {requested ? (
+          <button
+            onClick={onCancel}
+            className="px-6 py-2 border border-accent text-accent hover:bg-bg-soft transition-colors flex items-center gap-2"
+          >
+            <span className="inline-block size-1.5 rounded-full bg-accent animate-pulse" />
+            waiting for rival...
+            <span className="text-fg-dim text-xs">(cancel)</span>
+          </button>
+        ) : (
+          <button
+            onClick={onRequest}
+            className="px-6 py-2 border border-accent text-accent hover:bg-accent hover:text-bg transition-colors"
+          >
+            rematch
+          </button>
+        )}
+        <button
+          onClick={onNewRace}
+          className="text-sm text-fg-dim hover:text-accent transition-colors"
+        >
+          new race
+        </button>
+      </div>
+
+      <div className="text-xs text-fg-dimmer min-h-[1em]">
+        {opponentReady && !requested && (
+          <span className="text-opponent">rival wants a rematch</span>
+        )}
+        {!opponentReady && !requested && (
+          <span>
+            press <span className="text-fg-dim">enter</span> for rematch
+          </span>
+        )}
+        {requested && !opponentReady && (
+          <span>waiting on rival to click rematch</span>
+        )}
+        {requested && opponentReady && (
+          <span className="text-accent">both ready · new race starting</span>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* -------------------- banner + results -------------------- */
 
 type Outcome = "win" | "lose" | "tie";
 

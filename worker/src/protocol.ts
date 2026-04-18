@@ -47,6 +47,11 @@ export interface RaceResult {
   guest: PlayerResult;
 }
 
+export interface RematchReady {
+  host: boolean;
+  guest: boolean;
+}
+
 export interface PublicRoomState {
   roomId: string;
   passage: PassageInfo;
@@ -60,6 +65,8 @@ export interface PublicRoomState {
   endAt?: number;
   /** Final result, set when status transitions to "ended". */
   result?: RaceResult;
+  /** Per-role rematch readiness, only populated while status === "ended". */
+  rematchReady?: RematchReady;
 }
 
 /** Client → Server messages */
@@ -73,7 +80,9 @@ export type ClientMsg =
       wpm: number;
       accuracy: number;
     }
-  | { t: "finished"; wpm: number; accuracy: number; elapsedMs: number };
+  | { t: "finished"; wpm: number; accuracy: number; elapsedMs: number }
+  | { t: "rematch_request" }
+  | { t: "rematch_cancel" };
 
 /** Server → Client messages */
 export type ServerMsg =
