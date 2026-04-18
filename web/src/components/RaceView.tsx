@@ -73,22 +73,17 @@ export function RaceView({
       )
         return;
 
-      // Ctrl+Backspace (Windows/Linux) or Alt+Backspace (Mac) = delete
-      // word. Handle before the generic modifier bail-out below.
-      if (
-        e.key === "Backspace" &&
-        (e.ctrlKey || e.altKey) &&
-        !e.metaKey
-      ) {
+      // Word-delete: Ctrl+Backspace on Windows/Linux, Alt+Backspace on Mac.
+      // Translated into a synthetic "CtrlBackspace" key id for useTyping.
+      if (e.key === "Backspace" && (e.ctrlKey || e.altKey)) {
         e.preventDefault();
         if (status === "racing" && typing.state !== "done") {
-          typing.deleteWord();
+          typing.handleKey("CtrlBackspace");
         }
         return;
       }
 
-      // Other modifier combos (Ctrl+R reload, Ctrl+T new tab, Cmd+L
-      // URL bar, etc.) — let the browser have them.
+      // Leave other browser shortcuts (Ctrl+R, Ctrl+L, etc.) alone.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       if (e.key === "Backspace" || e.key === " " || e.key.length === 1) {
@@ -100,7 +95,7 @@ export function RaceView({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [status, typing.state, typing.handleKey, typing.deleteWord]);
+  }, [status, typing.state, typing.handleKey]);
 
   // Broadcast progress on every local position change.
   const latestRef = useRef({

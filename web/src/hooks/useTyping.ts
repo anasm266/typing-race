@@ -3,6 +3,31 @@ import { calcWpm, type WpmSample } from "../lib/wpm";
 
 export type TypingState = "idle" | "typing" | "done";
 
+/**
+ * Where Ctrl+Backspace should leave the cursor.
+ *
+ * Anchored to *passage* whitespace, not *typed* whitespace, so if the user
+ * inserted spurious spaces in the middle of a word the cursor still lands
+ * at the start of the current passage-word — which is what people expect
+ * when they hit ctrl+backspace to "redo the word".
+ *
+ * Algorithm:
+ *   1. Walk back over any whitespace immediately before the current pos.
+ *      (Handles the case where pos is already at a word boundary — we
+ *      should delete the *previous* word, not stay put.)
+ *   2. Walk back over the preceding word.
+ *   3. Land at the first index of that word.
+ */
+function ctrlBackspaceTarget(
+  typedLen: number,
+  passage: string
+): number {
+  let pos = Math.min(typedLen, passage.length);
+  while (pos > 0 && /\s/.test(passage[pos - 1])) pos--;
+  while (pos > 0 && !/\s/.test(passage[pos - 1])) pos--;
+  return pos;
+}
+
 export interface UseTypingOptions {
   /**
    * If provided, timer starts from this ms timestamp regardless of keystrokes.
@@ -22,7 +47,6 @@ export interface UseTypingResult {
   wpm: number;
   wpmSamples: WpmSample[];
   handleKey: (key: string) => void;
-  deleteWord: () => void;
   reset: () => void;
 }
 
@@ -102,6 +126,14 @@ export function useTyping(
         return;
       }
 
+      // Ctrl+Backspace / Alt+Backspace — delete the previous word. RaceView
+      // translates the native modifier combo into this synthetic key id
+      // before calling handleKey.
+      if (key === "CtrlBackspace") {
+        setTyped((t) => t.slice(0, ctrlBackspaceTarget(t.length, passage)));
+        return;
+      }
+
       if (key.length !== 1) return;
 
       if (startedAt === null) setStartedAt(Date.now());
@@ -111,25 +143,6 @@ export function useTyping(
     },
     [startedAt, endedAt, passage]
   );
-
-  /**
-   * Ctrl+Backspace / Alt+Backspace semantics: wipe back to the start of
-   * the current word. If we're already on a whitespace run, skip that
-   * first, then keep deleting non-whitespace. Matches how every text
-   * input on the planet handles the shortcut.
-   */
-  const deleteWord = useCallback(() => {
-    if (endedAt !== null) return;
-    setTyped((t) => {
-      if (t.length === 0) return t;
-      let i = t.length;
-      // Skip trailing whitespace
-      while (i > 0 && /\s/.test(t[i - 1])) i--;
-      // Delete non-whitespace run
-      while (i > 0 && !/\s/.test(t[i - 1])) i--;
-      return t.slice(0, i);
-    });
-  }, [endedAt]);
 
   const reset = useCallback(() => {
     setTyped("");
@@ -163,7 +176,6 @@ export function useTyping(
     wpm,
     wpmSamples: samples,
     handleKey,
-    deleteWord,
     reset,
   };
 }

@@ -8,7 +8,7 @@ import { ResultScreen } from "./ResultScreen";
 export function TypingRace() {
   const [passage, setPassage] = useState<Passage>(() => randomPassage());
   const typing = useTyping(passage.text);
-  const { state, handleKey, deleteWord, reset } = typing;
+  const { state, handleKey, reset } = typing;
 
   const restart = useCallback(() => {
     setPassage((prev) => randomPassage(prev.id));
@@ -25,14 +25,10 @@ export function TypingRace() {
       )
         return;
 
-      // Ctrl+Backspace / Alt+Backspace = word delete.
-      if (
-        e.key === "Backspace" &&
-        (e.ctrlKey || e.altKey) &&
-        !e.metaKey
-      ) {
+      // Word-delete: Ctrl+Backspace on Windows/Linux, Alt+Backspace on Mac.
+      if (e.key === "Backspace" && (e.ctrlKey || e.altKey)) {
         e.preventDefault();
-        deleteWord();
+        handleKey("CtrlBackspace");
         return;
       }
 
@@ -51,7 +47,7 @@ export function TypingRace() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [state, handleKey, deleteWord, restart]);
+  }, [state, handleKey, restart]);
 
   if (typing.state === "done") {
     return (
