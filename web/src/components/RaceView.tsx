@@ -72,6 +72,23 @@ export function RaceView({
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
       )
         return;
+
+      // Ctrl+Backspace (Windows/Linux) or Alt+Backspace (Mac) = delete
+      // word. Handle before the generic modifier bail-out below.
+      if (
+        e.key === "Backspace" &&
+        (e.ctrlKey || e.altKey) &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        if (status === "racing" && typing.state !== "done") {
+          typing.deleteWord();
+        }
+        return;
+      }
+
+      // Other modifier combos (Ctrl+R reload, Ctrl+T new tab, Cmd+L
+      // URL bar, etc.) — let the browser have them.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       if (e.key === "Backspace" || e.key === " " || e.key.length === 1) {
@@ -83,7 +100,7 @@ export function RaceView({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [status, typing.state, typing.handleKey]);
+  }, [status, typing.state, typing.handleKey, typing.deleteWord]);
 
   // Broadcast progress on every local position change.
   const latestRef = useRef({

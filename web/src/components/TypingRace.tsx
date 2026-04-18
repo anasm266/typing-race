@@ -8,7 +8,7 @@ import { ResultScreen } from "./ResultScreen";
 export function TypingRace() {
   const [passage, setPassage] = useState<Passage>(() => randomPassage());
   const typing = useTyping(passage.text);
-  const { state, handleKey, reset } = typing;
+  const { state, handleKey, deleteWord, reset } = typing;
 
   const restart = useCallback(() => {
     setPassage((prev) => randomPassage(prev.id));
@@ -24,6 +24,18 @@ export function TypingRace() {
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
       )
         return;
+
+      // Ctrl+Backspace / Alt+Backspace = word delete.
+      if (
+        e.key === "Backspace" &&
+        (e.ctrlKey || e.altKey) &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        deleteWord();
+        return;
+      }
+
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       if (e.key === "Tab") {
@@ -39,7 +51,7 @@ export function TypingRace() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [state, handleKey, restart]);
+  }, [state, handleKey, deleteWord, restart]);
 
   if (typing.state === "done") {
     return (
