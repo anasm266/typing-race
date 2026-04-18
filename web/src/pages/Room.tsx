@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useRoom } from "../hooks/useRoom";
 import { RaceView } from "../components/RaceView";
+import { ReadyCheck } from "../components/ReadyCheck";
 
 export function Room() {
   const params = useParams<{ id: string }>();
@@ -71,6 +72,8 @@ export function Room() {
       />
       {roomState.status === "waiting" ? (
         <WaitingLobby roomId={roomId} />
+      ) : roomState.status === "ready_check" ? (
+        <ReadyCheck room={roomState} role={role} send={send} />
       ) : (
         <RaceView
           key={roomState.passage.id}
@@ -213,7 +216,7 @@ function WaitingLobby({ roomId }: { roomId: string }) {
           </button>
         </div>
         <span className="text-xs text-fg-dimmer">
-          text it, post it, paste it — race starts when they open it
+          text it, post it, paste it — they'll lock in when they're ready
         </span>
       </div>
 
