@@ -8,6 +8,7 @@ import type {
   ClientMsg,
   PlayerRole,
   PublicRoomState,
+  ReactionKey,
   ServerMsg,
 } from "../lib/protocol";
 
@@ -30,6 +31,14 @@ export interface OpponentFinish {
   elapsedMs: number;
 }
 
+export interface OpponentReaction {
+  key: ReactionKey;
+  from: PlayerRole;
+  /** monotonically increasing id so repeated identical reactions still
+   *  trigger a fresh toast render */
+  at: number;
+}
+
 export interface UseRoomResult {
   roomState: PublicRoomState | null;
   connectionState: ConnectionState;
@@ -37,6 +46,7 @@ export interface UseRoomResult {
   role: PlayerRole | null;
   opponentProgress: OpponentProgress | null;
   opponentFinish: OpponentFinish | null;
+  opponentReaction: OpponentReaction | null;
   send: (msg: ClientMsg) => void;
 }
 
@@ -55,6 +65,8 @@ export function useRoom(roomId: string): UseRoomResult {
     useState<OpponentProgress | null>(null);
   const [opponentFinish, setOpponentFinish] =
     useState<OpponentFinish | null>(null);
+  const [opponentReaction, setOpponentReaction] =
+    useState<OpponentReaction | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
@@ -69,6 +81,7 @@ export function useRoom(roomId: string): UseRoomResult {
     setRole(null);
     setOpponentProgress(null);
     setOpponentFinish(null);
+    setOpponentReaction(null);
     retryCountRef.current = 0;
 
     function connect() {
@@ -123,6 +136,13 @@ export function useRoom(roomId: string): UseRoomResult {
               wpm: msg.wpm,
               accuracy: msg.accuracy,
               elapsedMs: msg.elapsedMs,
+            });
+            return;
+          case "opponent_reaction":
+            setOpponentReaction({
+              key: msg.key,
+              from: msg.from,
+              at: Date.now(),
             });
             return;
           case "peer_joined":
@@ -198,6 +218,7 @@ export function useRoom(roomId: string): UseRoomResult {
     role,
     opponentProgress,
     opponentFinish,
+    opponentReaction,
     send,
   };
 }

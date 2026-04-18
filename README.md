@@ -23,6 +23,7 @@ A frictionless real-time 2-player typing race. No signup, no lobby, no queue —
 - **Server-declared winner** — first finisher wins in finish mode, higher WPM at timer end wins in time mode
 - **Rematch without re-sharing** — both click, new passage, countdown restarts
 - **Auto-reconnect on wifi blips** — session tokens keep your role through reloads, 30s grace before forfeit
+- **Trash-talk reactions** — one-tap emoji taunts toast on the opponent's screen
 - **Public recent-races feed** backed by D1 (SQLite at the edge)
 
 ## Stack
@@ -130,7 +131,7 @@ Thresholds in the script: `welcome_ok > 98%`, `p95 round-trip < 300ms`, `HTTP er
 
 ## Project status
 
-Current milestone: **M8 (waveform + trash talk)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
+Current milestone: **M9 (final QA)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
 
 **Done:**
 - M0 · scaffold · Vite+React frontend and Cloudflare Worker both deployed with end-to-end health check.
@@ -141,6 +142,7 @@ Current milestone: **M8 (waveform + trash talk)** — next. See [`PLAN.md` §7](
 - M5 · WPM graph + rematch · Recharts line chart of both players' WPM over the race window, server-driven rematch flow (both click rematch → picks a new passage, clears race state, restarts countdown), keydown-capture-level preventDefault so Space doesn't scroll during the countdown.
 - M6 · disconnect handling · per-room sessionStorage tokens so reloads keep their role, single-alarm scheduler handling countdown/race-end/grace/expiry, 30s grace on mid-race drop with server-side forfeit if the rival never comes back, automatic 10-minute room expiry after both players leave, client auto-reconnect with exponential backoff (500ms → 5s) preserving the last-seen room state during the retry.
 - M7 · leaderboard + polish · D1 (SQLite) `races` table written on every race end, public `/recent` page showing last 20 finished races with WPM / accuracy / outcome / passage length, Sentry wired on FE + Worker + DO, Better Stack uptime monitor, k6 WebSocket load-test scenario.
+- M8 · trash-talk bar · 6 pre-written reactions (👀 🐢 😬 🫠 🔥 💀) relayed through the Worker; opponent sees a pink top-of-screen toast for 2.5s, sender sees a brief button pulse, 3s per-button cooldown. Visible during countdown and live race only. **Waveform dropped** — vibe-only, no resume signal, higher maintenance cost than payoff.
 
 ## License
 

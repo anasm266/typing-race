@@ -98,6 +98,37 @@ body {
   will-change: transform, opacity;
 }
 
+@keyframes reactionPulse {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.reaction-pulse {
+  animation: reactionPulse 260ms ease-out;
+}
+
+@keyframes toastIn {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -16px) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.toast-in {
+  animation: toastIn 200ms ease-out;
+}
+
 .passage-char {
   position: relative;
 }

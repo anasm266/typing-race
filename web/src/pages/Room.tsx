@@ -15,6 +15,7 @@ export function Room() {
     role,
     opponentProgress,
     opponentFinish,
+    opponentReaction,
     send,
   } = useRoom(roomId);
 
@@ -81,6 +82,7 @@ export function Room() {
           role={role}
           opponentProgress={opponentProgress}
           opponentFinish={opponentFinish}
+          opponentReaction={opponentReaction}
           send={send}
           onNewRace={() => setLocation("/")}
         />
