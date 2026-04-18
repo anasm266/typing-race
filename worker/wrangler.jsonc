@@ -20,5 +20,15 @@
       "tag": "v1",
       "new_sqlite_classes": ["Room"]
     }
-  ]
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "typing-race-db",
+      "database_id": "0d434b1c-0446-40a5-b392-91010053003a"
+    }
+  ],
+  "vars": {
+    "SENTRY_DSN": "https://40ba518570ae0f5e78dc521b123e7afc@o4511239705264128.ingest.us.sentry.io/4511239724924928"
+  }
 }

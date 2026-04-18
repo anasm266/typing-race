@@ -1,4 +1,5 @@
-import { Room } from "./room";
+import * as Sentry from "@sentry/cloudflare";
+import { Room as RoomClass } from "./room";
 import { pickPassage } from "./passages";
 import {
   DEFAULT_CONFIG,
@@ -7,10 +8,20 @@ import {
   type RoomConfig,
 } from "./protocol";
 
-export { Room };
+export const Room = Sentry.instrumentDurableObjectWithSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    tracesSampleRate: 0.1,
+    sendDefaultPii: false,
+    environment: "production",
+  }),
+  RoomClass
+);
 
-interface Env {
-  ROOM: DurableObjectNamespace<Room>;
+export interface Env {
+  ROOM: DurableObjectNamespace<RoomClass>;
+  DB: D1Database;
+  SENTRY_DSN: string;
 }
 
 const CORS_HEADERS = {
@@ -34,7 +45,24 @@ function mergeConfig(partial?: Partial<RoomConfig>): RoomConfig {
   return { ...DEFAULT_CONFIG, ...partial };
 }
 
-export default {
+interface RecentRaceRow {
+  id: string;
+  finished_at: number;
+  end_reason: string;
+  outcome: string;
+  passage_id: string;
+  passage_length: string;
+  passage_words: number;
+  duration_ms: number;
+  host_wpm: number;
+  guest_wpm: number;
+  host_accuracy: number;
+  guest_accuracy: number;
+  host_finished: number;
+  guest_finished: number;
+}
+
+const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -46,7 +74,7 @@ export default {
       return json({
         status: "ok",
         service: "typing-race-api",
-        milestone: "M2",
+        milestone: "M7",
         time: new Date().toISOString(),
       });
     }
@@ -55,7 +83,13 @@ export default {
       return handleCreateRoom(request, env);
     }
 
-    const wsMatch = url.pathname.match(/^\/room\/([a-zA-Z0-9-]+)\/ws$/);
+    if (url.pathname === "/recent" && request.method === "GET") {
+      return handleRecent(env);
+    }
+
+    const wsMatch = url.pathname.match(
+      /^\/room\/([a-zA-Z0-9-]+)\/ws$/
+    );
     if (wsMatch) {
       return handleWsUpgrade(request, env, wsMatch[1]);
     }
@@ -63,6 +97,16 @@ export default {
     return json({ error: "not_found", path: url.pathname }, 404);
   },
 } satisfies ExportedHandler<Env>;
+
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    tracesSampleRate: 0.1,
+    sendDefaultPii: false,
+    environment: "production",
+  }),
+  handler
+);
 
 async function handleCreateRoom(
   request: Request,
@@ -72,7 +116,7 @@ async function handleCreateRoom(
   try {
     body = (await request.json()) as CreateRoomRequest;
   } catch {
-    // empty body is fine — use defaults
+    // empty body OK
   }
 
   const config = mergeConfig(body.config);
@@ -111,4 +155,25 @@ async function handleWsUpgrade(
   internalUrl.pathname = "/__ws";
 
   return stub.fetch(new Request(internalUrl, request));
+}
+
+async function handleRecent(env: Env): Promise<Response> {
+  try {
+    const rs = await env.DB.prepare(
+      `SELECT id, finished_at, end_reason, outcome,
+              passage_id, passage_length, passage_words,
+              duration_ms,
+              host_wpm, guest_wpm,
+              host_accuracy, guest_accuracy,
+              host_finished, guest_finished
+         FROM races
+        ORDER BY finished_at DESC
+        LIMIT 20`
+    ).all<RecentRaceRow>();
+
+    return json({ races: rs.results ?? [] });
+  } catch (err) {
+    Sentry.captureException(err);
+    return json({ error: "db_error" }, 500);
+  }
 }

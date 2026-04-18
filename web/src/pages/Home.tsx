@@ -96,12 +96,21 @@ export function Home() {
         {error && (
           <span className="text-error text-sm">error: {error}</span>
         )}
-        <Link
-          href="/solo"
-          className="text-xs text-fg-dim hover:text-accent transition-colors mt-2"
-        >
-          or practice alone →
-        </Link>
+        <div className="flex gap-4 text-xs text-fg-dim mt-2">
+          <Link
+            href="/solo"
+            className="hover:text-accent transition-colors"
+          >
+            practice alone →
+          </Link>
+          <span className="text-fg-dimmer">·</span>
+          <Link
+            href="/recent"
+            className="hover:text-accent transition-colors"
+          >
+            recent races →
+          </Link>
+        </div>
       </div>
     </div>
   );
