@@ -4,8 +4,9 @@
 
 A frictionless real-time 2-player typing race. No signup, no lobby, no queue — just a link that creates a live room and starts within 10 seconds.
 
-**Live demo:** _coming soon_
-**Status page:** _coming soon_
+- **Live app:** https://typing-race.pages.dev
+- **API health:** https://typing-race-api.kingzcopz266.workers.dev/health
+- **Status page:** _coming in M7_
 
 ---
 
@@ -61,21 +62,48 @@ A frictionless real-time 2-player typing race. No signup, no lobby, no queue —
 
 Full design rationale: see [`PLAN.md`](./PLAN.md). Design doc will live at `DESIGN.md` once architecture is frozen.
 
+## Repo layout
+
+```
+typing-race/
+├── web/          # Vite + React frontend (deploys to Cloudflare Pages)
+├── worker/       # Cloudflare Worker (HTTP + WebSocket API)
+├── PLAN.md       # Feature scope, milestones, locked decisions
+└── package.json  # npm workspaces root
+```
+
 ## Local development
 
-_Not set up yet — coming in milestone M0._
+```bash
+npm install
+
+# terminal 1 — worker on http://localhost:8787
+npm run dev:worker
+
+# terminal 2 — web on http://localhost:5173
+npm run dev:web
+```
+
+Set `web/.env` (copy from `.env.example`) if your local Worker isn't on the default port.
+
+## Deployment
 
 ```bash
-# planned
-npm install
-npm run dev         # vite + wrangler dev in parallel
-npm run test
-npm run test:load   # k6 WebSocket load test
+# worker
+npm run deploy:worker
+
+# web (builds + uploads to Cloudflare Pages)
+npm run build:web && npm run deploy:web
 ```
+
+Everything runs on Cloudflare's free tier. No credit card required.
 
 ## Project status
 
-Current milestone: **M0 (scaffold)**. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
+Current milestone: **M1 (single-player typing)** — next. See [`PLAN.md` §7](./PLAN.md#7-milestones-rough--refine-when-we-start-building) for the roadmap.
+
+**Done:**
+- M0 · scaffold · Vite+React frontend and Cloudflare Worker both deployed with end-to-end health check.
 
 ## License
 
