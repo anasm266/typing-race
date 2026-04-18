@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useRoom } from "../hooks/useRoom";
-import { Passage as PassageView } from "../components/Passage";
+import { RaceView } from "../components/RaceView";
 
 export function Room() {
   const params = useParams<{ id: string }>();
   const roomId = params.id ?? "";
   const [, setLocation] = useLocation();
-  const { roomState, connectionState, error } = useRoom(roomId);
+  const {
+    roomState,
+    connectionState,
+    error,
+    opponentProgress,
+    opponentFinish,
+    send,
+  } = useRoom(roomId);
 
   if (error === "room_not_found") {
     return (
@@ -47,7 +54,14 @@ export function Room() {
     return <WaitingLobby roomId={roomId} />;
   }
 
-  return <ReadyLobby passage={roomState.passage.text} />;
+  return (
+    <RaceView
+      room={roomState}
+      opponentProgress={opponentProgress}
+      opponentFinish={opponentFinish}
+      send={send}
+    />
+  );
 }
 
 function StatusScreen({
@@ -147,26 +161,3 @@ function WaitingLobby({ roomId }: { roomId: string }) {
   );
 }
 
-function ReadyLobby({ passage }: { passage: string }) {
-  return (
-    <div className="flex flex-col items-center gap-10 w-full">
-      <div className="flex items-center gap-2 text-accent">
-        <span className="inline-block size-2 rounded-full bg-accent" />
-        <span className="text-[0.75rem] uppercase tracking-[0.2em]">
-          opponent connected
-        </span>
-      </div>
-
-      <h2 className="text-2xl text-center">both here. ready to race.</h2>
-
-      <div className="opacity-50 pointer-events-none">
-        <PassageView passage={passage} typed="" />
-      </div>
-
-      <div className="text-xs text-fg-dimmer text-center max-w-md">
-        countdown and live typing sync coming in M3 — for now this just
-        confirms both browsers are connected to the same room.
-      </div>
-    </div>
-  );
-}

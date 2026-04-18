@@ -3,6 +3,8 @@ import { useMemo } from "react";
 interface PassageProps {
   passage: string;
   typed: string;
+  /** Opponent's current typed position. -1 / undefined = don't render. */
+  opponentPos?: number;
 }
 
 interface Token {
@@ -28,7 +30,7 @@ function tokenize(text: string): Token[] {
   return tokens;
 }
 
-export function Passage({ passage, typed }: PassageProps) {
+export function Passage({ passage, typed, opponentPos }: PassageProps) {
   const tokens = useMemo(() => tokenize(passage), [passage]);
 
   return (
@@ -46,6 +48,7 @@ export function Passage({ passage, typed }: PassageProps) {
                 ch={ch}
                 globalIdx={globalIdx}
                 typed={typed}
+                opponentPos={opponentPos}
               />
             );
           });
@@ -63,6 +66,7 @@ export function Passage({ passage, typed }: PassageProps) {
                   ch={ch}
                   globalIdx={globalIdx}
                   typed={typed}
+                  opponentPos={opponentPos}
                 />
               );
             })}
@@ -77,13 +81,15 @@ interface CharProps {
   ch: string;
   globalIdx: number;
   typed: string;
+  opponentPos?: number;
 }
 
-function Char({ ch, globalIdx, typed }: CharProps) {
+function Char({ ch, globalIdx, typed, opponentPos }: CharProps) {
   const isTyped = globalIdx < typed.length;
   const isCorrect = isTyped && typed[globalIdx] === ch;
   const isWrong = isTyped && !isCorrect;
   const isCursor = globalIdx === typed.length;
+  const isOpponent = opponentPos !== undefined && globalIdx === opponentPos;
 
   return (
     <span
@@ -94,6 +100,7 @@ function Char({ ch, globalIdx, typed }: CharProps) {
       }
       data-cursor={isCursor ? "true" : undefined}
       data-wrong={isWrong ? "true" : undefined}
+      data-opponent={isOpponent ? "true" : undefined}
     >
       {ch}
     </span>
