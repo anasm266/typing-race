@@ -101,6 +101,16 @@ export interface PublicRoomState {
   finishGrace?: FinishGraceInfo;
 }
 
+/** Pre-written trash-talk reactions. Ids are short + stable so the server
+ *  doesn't need to know the display text (keeps copy changes frontend-only). */
+export type ReactionKey =
+  | "see_you"
+  | "take_time"
+  | "oof"
+  | "wait_up"
+  | "lets_go"
+  | "gg";
+
 /** Client → Server messages */
 export type ClientMsg =
   | { t: "hello" }
@@ -121,7 +131,8 @@ export type ClientMsg =
       correctCount: number;
     }
   | { t: "rematch_request" }
-  | { t: "rematch_cancel" };
+  | { t: "rematch_cancel" }
+  | { t: "reaction"; key: ReactionKey };
 
 /** Server → Client messages */
 export type ServerMsg =
@@ -137,6 +148,7 @@ export type ServerMsg =
       accuracy: number;
     }
   | { t: "opponent_finished"; wpm: number; accuracy: number; elapsedMs: number }
+  | { t: "opponent_reaction"; key: ReactionKey; from: PlayerRole }
   | { t: "error"; code: string; message: string }
   | { t: "pong" };
 

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useTyping } from "../hooks/useTyping";
 import { Passage } from "./Passage";
 import { EndScreen } from "./EndScreen";
+import { ReactionBar } from "./ReactionBar";
+import { ReactionToast } from "./ReactionToast";
 import { calcAccuracy, formatElapsed, type WpmSample } from "../lib/wpm";
 import type {
   ClientMsg,
@@ -12,6 +14,7 @@ import type {
 import type {
   OpponentFinish,
   OpponentProgress,
+  OpponentReaction,
 } from "../hooks/useRoom";
 
 interface RaceViewProps {
@@ -19,6 +22,7 @@ interface RaceViewProps {
   role: PlayerRole | null;
   opponentProgress: OpponentProgress | null;
   opponentFinish: OpponentFinish | null;
+  opponentReaction: OpponentReaction | null;
   send: (msg: ClientMsg) => void;
   onNewRace: () => void;
 }
@@ -28,6 +32,7 @@ export function RaceView({
   role,
   opponentProgress,
   opponentFinish,
+  opponentReaction,
   send,
   onNewRace,
 }: RaceViewProps) {
@@ -200,6 +205,8 @@ export function RaceView({
         opponentPos={opponentPos}
       />
 
+      <ReactionBar send={send} />
+
       <FooterHint
         status={status}
         selfDone={myRoleDone}
@@ -207,6 +214,8 @@ export function RaceView({
         endMode={config.endMode}
         hasFinishGrace={!!room.finishGrace}
       />
+
+      <ReactionToast latest={opponentReaction} myRole={role} />
     </div>
   );
 }

@@ -453,6 +453,22 @@ export class Room extends DurableObject<Env> {
         return;
       }
 
+      case "reaction": {
+        // Only during the countdown and live race. ready_check is
+        // reserved for its own UX (lock-in), ended has its own vibe
+        // (win/lose banner), waiting has no opponent.
+        const st = this.state?.status;
+        if (st !== "starting" && st !== "racing") return;
+        const att = ws.deserializeAttachment() as Attachment | null;
+        if (!att) return;
+        this.broadcastExcept(ws, {
+          t: "opponent_reaction",
+          key: msg.key,
+          from: att.role,
+        });
+        return;
+      }
+
       case "rematch_cancel": {
         if (this.state?.status !== "ended") return;
         const att = ws.deserializeAttachment() as Attachment | null;

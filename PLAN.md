@@ -47,8 +47,9 @@ Quality / infra (the stuff recruiters actually notice):
 
 ### v1.1 — polish (after MVP works end-to-end)
 
-- [ ] US-08 Rhythm waveform (canvas, 60fps)
-- [ ] US-09 Trash talk reaction bar + toasts
+- [x] ~~US-08 Rhythm waveform~~ — **scrapped** (vibe-only, adds canvas surface
+      to maintain for no resume signal. Decision: keep trash-talk, drop this.)
+- [x] US-09 Trash talk reaction bar + toasts
 - [ ] Accessibility pass (keyboard nav for all menus, aria labels, color-contrast)
 - [ ] Mobile layout refinements
 
@@ -189,8 +190,8 @@ server → client:
 | M5 | WPM graph + rematch | Post-race screen shows graph, rematch button works | ✅ done |
 | M6 | Disconnect handling + expiry | Drop wifi mid-race → UI handles it gracefully | ✅ done |
 | M7 | Leaderboard + polish | `/recent` page live, README has GIF + k6 screenshot | ✅ done |
-| M8 | Waveform + trash talk | v1.1 polish features shipped | ⏭ next |
-| M9 | Final QA | Mobile works, a11y pass, **k6 run captured in README**, demo GIF recorded, Sentry smoke-tested | |
+| M8 | Trash-talk bar (waveform dropped) | 6 pre-written reactions with per-button cooldown + opponent toast | ✅ done |
+| M9 | Final QA | Mobile works, a11y pass, **k6 run captured in README**, demo GIF recorded, Sentry smoke-tested | ⏭ next |
 
 ---
 
