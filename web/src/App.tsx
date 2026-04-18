@@ -3,6 +3,7 @@ import { Home } from "./pages/Home";
 import { Room } from "./pages/Room";
 import { Solo } from "./pages/Solo";
 import { Recent } from "./pages/Recent";
+import { Analytics } from "./pages/Analytics";
 import { HealthPill } from "./components/HealthPill";
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/room/:id" component={Room} />
           <Route path="/solo" component={Solo} />
           <Route path="/recent" component={Recent} />
+          <Route path="/analytics" component={Analytics} />
           <Route>
             <div className="flex flex-col items-center gap-4 text-center">
               <h2 className="text-2xl">not found</h2>

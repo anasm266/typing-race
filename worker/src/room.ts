@@ -123,6 +123,7 @@ export class Room extends DurableObject<Env> {
       createdAt: Date.now(),
     };
     await this.persistState();
+    await this.trackRoomCreated(this.state);
     return Response.json({ ok: true });
   }
 
@@ -189,6 +190,13 @@ export class Room extends DurableObject<Env> {
     } satisfies Attachment);
     this.ctx.acceptWebSocket(server);
 
+    const firstJoinForRole =
+      role === "host"
+        ? !this.state._hostSessionToken
+        : !this.state._guestSessionToken;
+    const entersReadyCheck =
+      this.state.playerCount === 1 && this.state.status === "waiting";
+
     // Update state: set token for the role, bump count, clear any
     // pending disconnect for this role, clear pending expiry.
     this.state = {
@@ -226,6 +234,15 @@ export class Room extends DurableObject<Env> {
     }
 
     await this.persistState();
+    await this.trackRoleJoin(this.state.roomId, role, firstJoinForRole);
+    if (entersReadyCheck) {
+      await this.trackReadyCheckStarted(
+        this.state.roomId,
+        this.state.readyCheckUntil
+          ? this.state.readyCheckUntil - READY_CHECK_MS
+          : Date.now()
+      );
+    }
     await this.rescheduleAlarm();
 
     this.safeSend(server, { t: "welcome", role, sessionToken });
@@ -526,6 +543,7 @@ export class Room extends DurableObject<Env> {
   private async handleDisconnect(closing: WebSocket): Promise<void> {
     if (!this.state) return;
 
+    const statusBeforeDisconnect = this.state.status;
     const att = closing.deserializeAttachment() as Attachment | null;
     const remaining = this.ctx
       .getWebSockets()
@@ -580,6 +598,14 @@ export class Room extends DurableObject<Env> {
       _expiresAt: expiresAt,
     };
     await this.persistState();
+    if (
+      att &&
+      (statusBeforeDisconnect === "waiting" ||
+        statusBeforeDisconnect === "ready_check" ||
+        statusBeforeDisconnect === "starting")
+    ) {
+      await this.trackPreStartDrop(this.state.roomId, att.role);
+    }
     await this.rescheduleAlarm();
 
     for (const other of this.ctx.getWebSockets()) {
@@ -681,6 +707,7 @@ export class Room extends DurableObject<Env> {
       }
       this.state = next;
       await this.persistState();
+      await this.trackRaceStarted(this.state.roomId, this.state.startAt ?? now);
       this.broadcast({ t: "state", room: toPublic(this.state) });
       await this.rescheduleAlarm();
       return;
@@ -738,6 +765,7 @@ export class Room extends DurableObject<Env> {
       finishGrace: undefined,
     };
     await this.persistState();
+    await this.trackRaceEnded(snapshotForDb.roomId, result);
     await this.rescheduleAlarm();
     this.broadcast({ t: "state", room: toPublic(this.state) });
 
@@ -852,6 +880,109 @@ export class Room extends DurableObject<Env> {
     } catch {
       // socket closed or closing — ignore
     }
+  }
+
+  private async trackRoomCreated(state: InternalState): Promise<void> {
+    await this.env.DB.prepare(
+      `INSERT OR IGNORE INTO room_analytics (
+         room_id,
+         created_at,
+         config_end_mode,
+         config_passage_length,
+         config_time_limit
+       ) VALUES (?, ?, ?, ?, ?)`
+    )
+      .bind(
+        state.roomId,
+        state.createdAt,
+        state.config.endMode,
+        state.config.passageLength,
+        state.config.timeLimit
+      )
+      .run();
+  }
+
+  private async trackRoleJoin(
+    roomId: string,
+    role: PlayerRole,
+    firstJoinForRole: boolean
+  ): Promise<void> {
+    if (!firstJoinForRole) return;
+    const column = role === "host" ? "host_joined_at" : "guest_joined_at";
+    await this.env.DB.prepare(
+      `UPDATE room_analytics
+          SET ${column} = COALESCE(${column}, ?)
+        WHERE room_id = ?`
+    )
+      .bind(Date.now(), roomId)
+      .run();
+  }
+
+  private async trackReadyCheckStarted(
+    roomId: string,
+    at: number
+  ): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE room_analytics
+          SET ready_check_started_at = COALESCE(ready_check_started_at, ?)
+        WHERE room_id = ?`
+    )
+      .bind(at, roomId)
+      .run();
+  }
+
+  private async trackRaceStarted(roomId: string, at: number): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE room_analytics
+          SET race_started_at = COALESCE(race_started_at, ?)
+        WHERE room_id = ?`
+    )
+      .bind(at, roomId)
+      .run();
+  }
+
+  private async trackPreStartDrop(
+    roomId: string,
+    role: PlayerRole
+  ): Promise<void> {
+    const roleColumn =
+      role === "host"
+        ? "host_pre_start_drop_count"
+        : "guest_pre_start_drop_count";
+    await this.env.DB.prepare(
+      `UPDATE room_analytics
+          SET pre_start_drop_count = pre_start_drop_count + 1,
+              ${roleColumn} = ${roleColumn} + 1
+        WHERE room_id = ?`
+    )
+      .bind(roomId)
+      .run();
+  }
+
+  private async trackRaceEnded(
+    roomId: string,
+    result: RaceResult
+  ): Promise<void> {
+    const completedSuccessfully = result.endReason === "disconnect" ? 0 : 1;
+    await this.env.DB.prepare(
+      `UPDATE room_analytics
+          SET race_ended_at = COALESCE(race_ended_at, ?),
+              race_end_reason = COALESCE(race_end_reason, ?),
+              outcome = COALESCE(outcome, ?),
+              completed_successfully = CASE
+                WHEN completed_successfully = 1 THEN 1
+                ELSE ?
+              END
+        WHERE room_id = ?`
+    )
+      .bind(
+        Date.now(),
+        result.endReason,
+        result.outcome,
+        completedSuccessfully,
+        roomId
+      )
+      .run();
   }
 }
 

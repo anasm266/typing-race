@@ -62,6 +62,24 @@ interface RecentRaceRow {
   guest_finished: number;
 }
 
+interface AnalyticsSummaryRow {
+  rooms_created: number;
+  rooms_joined: number;
+  races_started: number;
+  races_completed: number;
+  races_disconnected: number;
+  pre_start_drops: number;
+}
+
+interface AnalyticsDailyRow {
+  day: string;
+  rooms_created: number;
+  rooms_joined: number;
+  races_started: number;
+  races_completed: number;
+  pre_start_drops: number;
+}
+
 const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") {
@@ -85,6 +103,10 @@ const handler = {
 
     if (url.pathname === "/recent" && request.method === "GET") {
       return handleRecent(env);
+    }
+
+    if (url.pathname === "/analytics" && request.method === "GET") {
+      return handleAnalytics(env);
     }
 
     const wsMatch = url.pathname.match(
@@ -172,6 +194,60 @@ async function handleRecent(env: Env): Promise<Response> {
     ).all<RecentRaceRow>();
 
     return json({ races: rs.results ?? [] });
+  } catch (err) {
+    Sentry.captureException(err);
+    return json({ error: "db_error" }, 500);
+  }
+}
+
+async function handleAnalytics(env: Env): Promise<Response> {
+  try {
+    const summary = await env.DB.prepare(
+      `SELECT
+         COUNT(*) AS rooms_created,
+         SUM(CASE WHEN guest_joined_at IS NOT NULL THEN 1 ELSE 0 END) AS rooms_joined,
+         SUM(CASE WHEN race_started_at IS NOT NULL THEN 1 ELSE 0 END) AS races_started,
+         SUM(CASE WHEN completed_successfully = 1 THEN 1 ELSE 0 END) AS races_completed,
+         SUM(CASE WHEN race_end_reason = 'disconnect' THEN 1 ELSE 0 END) AS races_disconnected,
+         SUM(pre_start_drop_count) AS pre_start_drops
+       FROM room_analytics`
+    ).first<AnalyticsSummaryRow>();
+
+    const daily = await env.DB.prepare(
+      `SELECT
+         date(created_at / 1000, 'unixepoch') AS day,
+         COUNT(*) AS rooms_created,
+         SUM(CASE WHEN guest_joined_at IS NOT NULL THEN 1 ELSE 0 END) AS rooms_joined,
+         SUM(CASE WHEN race_started_at IS NOT NULL THEN 1 ELSE 0 END) AS races_started,
+         SUM(CASE WHEN completed_successfully = 1 THEN 1 ELSE 0 END) AS races_completed,
+         SUM(pre_start_drop_count) AS pre_start_drops
+       FROM room_analytics
+       WHERE created_at >= ?
+       GROUP BY date(created_at / 1000, 'unixepoch')
+       ORDER BY day DESC
+       LIMIT 14`
+    )
+      .bind(Date.now() - 14 * 24 * 60 * 60 * 1000)
+      .all<AnalyticsDailyRow>();
+
+    return json({
+      summary: {
+        roomsCreated: summary?.rooms_created ?? 0,
+        roomsJoined: summary?.rooms_joined ?? 0,
+        racesStarted: summary?.races_started ?? 0,
+        racesCompleted: summary?.races_completed ?? 0,
+        racesDisconnected: summary?.races_disconnected ?? 0,
+        preStartDrops: summary?.pre_start_drops ?? 0,
+      },
+      daily: (daily.results ?? []).map((row) => ({
+        day: row.day,
+        roomsCreated: row.rooms_created ?? 0,
+        roomsJoined: row.rooms_joined ?? 0,
+        racesStarted: row.races_started ?? 0,
+        racesCompleted: row.races_completed ?? 0,
+        preStartDrops: row.pre_start_drops ?? 0,
+      })),
+    });
   } catch (err) {
     Sentry.captureException(err);
     return json({ error: "db_error" }, 500);

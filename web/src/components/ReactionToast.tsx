@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type { PlayerRole, ReactionKey } from "../lib/protocol";
 import { REACTION_BY_KEY, REACTION_TOAST_MS } from "../lib/reactions";
 import type { OpponentReaction } from "../hooks/useRoom";
@@ -11,9 +11,15 @@ interface ReactionToastProps {
 interface ActiveToast {
   id: number;
   key: ReactionKey;
+  phase: "hidden" | "visible" | "leaving";
 }
 
-export function ReactionToast({ latest, myRole }: ReactionToastProps) {
+const TOAST_LEAVE_MS = 160;
+
+export const ReactionToast = memo(function ReactionToast({
+  latest,
+  myRole,
+}: ReactionToastProps) {
   const [toast, setToast] = useState<ActiveToast | null>(null);
 
   useEffect(() => {
@@ -21,16 +27,40 @@ export function ReactionToast({ latest, myRole }: ReactionToastProps) {
     // Ignore reactions the current client sent (shouldn't happen since
     // server broadcasts with broadcastExcept, but belt + suspenders).
     if (myRole && latest.from === myRole) return;
-    setToast({ id: latest.at, key: latest.key });
+    setToast({ id: latest.at, key: latest.key, phase: "hidden" });
   }, [latest, myRole]);
 
   useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(
-      () => setToast((prev) => (prev?.id === toast.id ? null : prev)),
-      REACTION_TOAST_MS
-    );
-    return () => window.clearTimeout(id);
+    if (toast.phase !== "hidden") return;
+
+    const raf = window.requestAnimationFrame(() => {
+      setToast((prev) =>
+        prev?.id === toast.id ? { ...prev, phase: "visible" } : prev
+      );
+    });
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!toast || toast.phase !== "visible") return;
+
+    const leaveDelay = Math.max(0, REACTION_TOAST_MS - TOAST_LEAVE_MS);
+    const leaveId = window.setTimeout(() => {
+      setToast((prev) =>
+        prev?.id === toast.id ? { ...prev, phase: "leaving" } : prev
+      );
+    }, leaveDelay);
+
+    const clearId = window.setTimeout(() => {
+      setToast((prev) => (prev?.id === toast.id ? null : prev));
+    }, REACTION_TOAST_MS);
+
+    return () => {
+      window.clearTimeout(leaveId);
+      window.clearTimeout(clearId);
+    };
   }, [toast]);
 
   if (!toast) return null;
@@ -42,7 +72,8 @@ export function ReactionToast({ latest, myRole }: ReactionToastProps) {
       key={toast.id}
       role="status"
       aria-live="polite"
-      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 bg-bg-soft border border-opponent/50 shadow-lg shadow-opponent/10 toast-in"
+      data-state={toast.phase}
+      className="reaction-toast fixed top-4 left-1/2 z-50 flex items-center gap-3 px-4 py-2 bg-bg-soft border border-opponent/50 shadow-lg shadow-opponent/10"
     >
       <span className="text-2xl leading-none">{def.emoji}</span>
       <div className="flex flex-col items-start">
@@ -53,4 +84,4 @@ export function ReactionToast({ latest, myRole }: ReactionToastProps) {
       </div>
     </div>
   );
-}
+});
