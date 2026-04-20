@@ -76,14 +76,15 @@ export function TypingRace() {
 
       <CapsLockWarning visible={capsLockOn} />
 
-      <PassageView passage={passage.text} typed={typing.typed} />
-
-      <TouchKeyboardInput
-        typed={typing.typed}
-        canFocus={true}
-        canType={true}
-        onKey={handleKey}
-      />
+      <div className="relative w-full max-w-[800px]">
+        <TouchKeyboardInput
+          typed={typing.typed}
+          canFocus={true}
+          canType={true}
+          onKey={handleKey}
+        />
+        <PassageView passage={passage.text} typed={typing.typed} />
+      </div>
 
       <div className="flex flex-col items-center gap-3">
         <div className="text-xs text-fg-dimmer flex gap-4">
