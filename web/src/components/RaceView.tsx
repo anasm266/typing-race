@@ -6,7 +6,6 @@ import { Passage } from "./Passage";
 import { EndScreen } from "./EndScreen";
 import { ReactionBar } from "./ReactionBar";
 import { ReactionToast } from "./ReactionToast";
-import { TouchKeyboardInput } from "./TouchKeyboardInput";
 import { calcAccuracy, formatElapsed, type WpmSample } from "../lib/wpm";
 import type {
   ClientMsg,
@@ -224,13 +223,6 @@ export function RaceView({
       />
 
       <CapsLockWarning visible={capsLockOn} />
-
-      <TouchKeyboardInput
-        typed={typing.typed}
-        canFocus={status === "starting" || status === "racing"}
-        canType={status === "racing" && typing.state !== "done"}
-        onKey={typing.handleKey}
-      />
 
       <ReactionBar send={send} />
 
