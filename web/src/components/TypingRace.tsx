@@ -82,9 +82,8 @@ export function TypingRace() {
           canFocus={true}
           canType={true}
           onKey={handleKey}
-        >
-          <PassageView passage={passage.text} typed={typing.typed} />
-        </TouchKeyboardInput>
+        />
+        <PassageView passage={passage.text} typed={typing.typed} />
       </div>
 
       <div className="flex flex-col items-center gap-3">

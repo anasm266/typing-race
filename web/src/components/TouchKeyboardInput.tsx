@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface TouchKeyboardInputProps {
   typed: string;
   canFocus: boolean;
   canType: boolean;
   onKey: (key: string) => void;
-  children: ReactNode;
 }
 
 export function TouchKeyboardInput({
@@ -13,7 +12,6 @@ export function TouchKeyboardInput({
   canFocus,
   canType,
   onKey,
-  children,
 }: TouchKeyboardInputProps) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [focused, setFocused] = useState(false);
@@ -72,9 +70,15 @@ export function TouchKeyboardInput({
     onKey(ch);
   }
 
+  const hint = !canFocus
+    ? "keyboard unavailable right now"
+    : focused
+    ? "keyboard ready"
+    : "tap here to type";
+
   function focusInput() {
     const el = inputRef.current;
-    if (!el || !canFocus) return;
+    if (!el) return;
     try {
       el.focus({ preventScroll: true });
     } catch {
@@ -83,15 +87,8 @@ export function TouchKeyboardInput({
   }
 
   return (
-    <div
-      className="relative w-full"
-      onPointerDown={() => {
-        if (window.innerWidth >= 768) return;
-        focusInput();
-      }}
-    >
-      {children}
-      <div className="sr-only md:hidden" aria-hidden="true">
+    <div className="pointer-events-none absolute right-3 top-3 z-10 md:hidden">
+      <div className="pointer-events-auto relative">
         <textarea
           ref={inputRef}
           value={typed}
@@ -107,16 +104,28 @@ export function TouchKeyboardInput({
           rows={1}
           disabled={!canFocus}
           aria-label="Typing input for mobile keyboard"
-          className="pointer-events-none absolute left-0 top-0 h-px w-px resize-none opacity-0"
+          className="pointer-events-none absolute inset-0 h-full w-full resize-none opacity-0"
         />
-      </div>
-      {!focused && canFocus && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center md:hidden">
-          <span className="bg-bg/80 px-2 py-1 text-[0.6rem] uppercase tracking-[0.12em] text-fg-dimmer backdrop-blur">
-            tap passage to type
+
+        <button
+          type="button"
+          onClick={focusInput}
+          disabled={!canFocus}
+          className={
+            "flex min-h-10 items-center justify-between gap-2 border border-border/80 bg-bg/90 px-3 py-2 text-xs uppercase tracking-[0.12em] shadow-sm backdrop-blur transition-colors " +
+            (!canFocus
+              ? "cursor-not-allowed text-fg-dimmer"
+              : focused
+              ? "text-accent"
+              : "text-fg-dim hover:text-accent")
+          }
+        >
+          <span>{hint}</span>
+          <span className="text-[0.6rem] uppercase tracking-[0.15em] text-fg-dimmer">
+            mobile
           </span>
-        </div>
-      )}
+        </button>
+      </div>
     </div>
   );
 }
