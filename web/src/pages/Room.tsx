@@ -193,7 +193,7 @@ function WaitingLobby({ roomId }: { roomId: string }) {
             waiting for opponent
           </span>
         </div>
-        <h2 className="text-2xl mt-2">send this link</h2>
+        <h2 className="text-2xl mt-2">send this room link</h2>
       </div>
 
       <div className="flex flex-col gap-2 w-full">
@@ -218,7 +218,8 @@ function WaitingLobby({ roomId }: { roomId: string }) {
           </button>
         </div>
         <span className="text-xs text-fg-dimmer">
-          text it, post it, paste it — they'll lock in when they're ready
+          send it to someone. when they open it, they'll join your room and
+          both of you can race together.
         </span>
       </div>
 
