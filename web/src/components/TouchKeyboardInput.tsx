@@ -76,19 +76,9 @@ export function TouchKeyboardInput({
     ? "keyboard ready"
     : "tap here to type";
 
-  function focusInput() {
-    const el = inputRef.current;
-    if (!el) return;
-    try {
-      el.focus({ preventScroll: true });
-    } catch {
-      el.focus();
-    }
-  }
-
   return (
-    <div className="pointer-events-none absolute right-3 top-3 z-10 md:hidden">
-      <div className="pointer-events-auto relative">
+    <div className="md:hidden w-full max-w-[800px]">
+      <div className="relative border border-border bg-bg-soft/50">
         <textarea
           ref={inputRef}
           value={typed}
@@ -109,10 +99,10 @@ export function TouchKeyboardInput({
 
         <button
           type="button"
-          onClick={focusInput}
+          onClick={() => inputRef.current?.focus()}
           disabled={!canFocus}
           className={
-            "flex min-h-10 items-center justify-between gap-2 border border-border/80 bg-bg/90 px-3 py-2 text-xs uppercase tracking-[0.12em] shadow-sm backdrop-blur transition-colors " +
+            "flex min-h-12 w-full items-center justify-between px-4 py-3 text-sm transition-colors " +
             (!canFocus
               ? "cursor-not-allowed text-fg-dimmer"
               : focused
@@ -121,7 +111,7 @@ export function TouchKeyboardInput({
           }
         >
           <span>{hint}</span>
-          <span className="text-[0.6rem] uppercase tracking-[0.15em] text-fg-dimmer">
+          <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dimmer">
             mobile
           </span>
         </button>

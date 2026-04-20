@@ -217,21 +217,20 @@ export function RaceView({
         />
       )}
 
-      <div className="relative w-full max-w-[800px]">
-        <TouchKeyboardInput
-          typed={typing.typed}
-          canFocus={status === "starting" || status === "racing"}
-          canType={status === "racing" && typing.state !== "done"}
-          onKey={typing.handleKey}
-        />
-        <Passage
-          passage={passage.text}
-          typed={typing.typed}
-          opponentPos={opponentPos}
-        />
-      </div>
+      <Passage
+        passage={passage.text}
+        typed={typing.typed}
+        opponentPos={opponentPos}
+      />
 
       <CapsLockWarning visible={capsLockOn} />
+
+      <TouchKeyboardInput
+        typed={typing.typed}
+        canFocus={status === "starting" || status === "racing"}
+        canType={status === "racing" && typing.state !== "done"}
+        onKey={typing.handleKey}
+      />
 
       <ReactionBar send={send} />
 
