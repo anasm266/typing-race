@@ -223,12 +223,13 @@ export function RaceView({
           canFocus={status === "starting" || status === "racing"}
           canType={status === "racing" && typing.state !== "done"}
           onKey={typing.handleKey}
-        />
-        <Passage
-          passage={passage.text}
-          typed={typing.typed}
-          opponentPos={opponentPos}
-        />
+        >
+          <Passage
+            passage={passage.text}
+            typed={typing.typed}
+            opponentPos={opponentPos}
+          />
+        </TouchKeyboardInput>
       </div>
 
       <CapsLockWarning visible={capsLockOn} />
