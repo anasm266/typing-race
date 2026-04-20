@@ -4,7 +4,6 @@ import { useTyping } from "../hooks/useTyping";
 import { randomPassage, type Passage } from "../lib/passages";
 import { CapsLockWarning } from "./CapsLockWarning";
 import { Passage as PassageView } from "./Passage";
-import { TouchKeyboardInput } from "./TouchKeyboardInput";
 import { Stats } from "./Stats";
 import { ResultScreen } from "./ResultScreen";
 
@@ -77,13 +76,6 @@ export function TypingRace() {
       <CapsLockWarning visible={capsLockOn} />
 
       <PassageView passage={passage.text} typed={typing.typed} />
-
-      <TouchKeyboardInput
-        typed={typing.typed}
-        canFocus={true}
-        canType={true}
-        onKey={handleKey}
-      />
 
       <div className="flex flex-col items-center gap-3">
         <div className="text-xs text-fg-dimmer flex gap-4">
