@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: grafana/setup-k6-action@v1
 
@@ -36,12 +36,12 @@ jobs:
           # Optional repo Variables: K6_API_URL, K6_WS_URL (empty = use script defaults)
           API_URL: ${{ vars.K6_API_URL }}
           WS_URL: ${{ vars.K6_WS_URL }}
-          K6_NO_USAGE_REPORT: "1"
-        run: k6 run --summary-export=k6-summary.json load-tests/ws-rooms.js
+        # --no-usage-report avoids K6_NO_USAGE_REPORT bool parsing (do not set it to "1")
+        run: k6 run --no-usage-report --summary-export=k6-summary.json load-tests/ws-rooms.js
 
       - name: Upload k6 summary (recorded result)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: k6-summary
           path: k6-summary.json
