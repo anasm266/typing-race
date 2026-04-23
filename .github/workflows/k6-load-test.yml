@@ -1,0 +1,71 @@
+# Scheduled + manual k6 load tests. Uploads a JSON summary artifact on every run
+# (including failures) for a simple historical record in GitHub Actions.
+name: k6 load test
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Sunday 06:00 UTC (low-traffic default)
+    - cron: "0 6 * * 0"
+  push:
+    branches: [main]
+    paths:
+      - "load-tests/**"
+      - ".github/workflows/k6-load-test.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: k6-load
+  cancel-in-progress: false
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 (WebSocket room scenario)
+        id: k6
+        env:
+          # Optional repo Variables: K6_API_URL, K6_WS_URL (empty = use script defaults)
+          API_URL: ${{ vars.K6_API_URL }}
+          WS_URL: ${{ vars.K6_WS_URL }}
+          K6_NO_USAGE_REPORT: "1"
+        run: k6 run --summary-export=k6-summary.json load-tests/ws-rooms.js
+
+      - name: Upload k6 summary (recorded result)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-summary
+          path: k6-summary.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## k6 load test"
+            echo ""
+            if [ -f k6-summary.json ]; then
+              echo "Full JSON export: download the **k6-summary** artifact from this run."
+              echo ""
+              echo "<details><summary>Metrics preview</summary>"
+              echo ""
+              echo '```json'
+              head -c 12000 k6-summary.json
+              echo ""
+              echo '```'
+              echo ""
+              echo "</details>"
+            else
+              echo "k6 did not write \`k6-summary.json\` (the run may have failed very early)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

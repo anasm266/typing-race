@@ -155,6 +155,19 @@ Or with Docker:
 docker run --rm -i grafana/k6 run - < load-tests/ws-rooms.js
 ```
 
+Write a local JSON summary (same as CI):
+
+```bash
+npm run k6:load
+# or: k6 run --summary-export=k6-summary.json load-tests/ws-rooms.js
+```
+
+### Continuous runs (CI)
+
+[`.github/workflows/k6-load-test.yml`](./.github/workflows/k6-load-test.yml) runs this scenario on a **weekly schedule** (Sundays 06:00 UTC), on **manual** workflow dispatch, and when `load-tests/` or the workflow file changes on `main`. Each run uploads a **`k6-summary` artifact** (JSON) you can download from the Actions run page—pass or fail, so you keep a simple history.
+
+Optional **repository Variables** (Settings → Secrets and variables → Actions → Variables): `K6_API_URL` and `K6_WS_URL` to point at a different worker; if unset, the script defaults apply.
+
 ## Observability
 
 - Sentry captures frontend errors plus Worker and Durable Object exceptions

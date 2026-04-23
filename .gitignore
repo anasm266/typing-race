@@ -40,6 +40,10 @@ playwright-report/
 test-results/
 playwright/.cache/
 
+# k6 local summary exports
+k6-summary.json
+load-tests/last-summary.json
+
 # Editor / OS
 .DS_Store
 Thumbs.db
