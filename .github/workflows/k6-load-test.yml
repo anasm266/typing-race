@@ -25,6 +25,10 @@ jobs:
   k6:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Until grafana/setup-k6-action ships a Node 24 build, opt in so Actions
+    # runs JS actions (e.g. setup-k6) on Node 24 and avoids Node 20 deprecation warnings.
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v6
 
