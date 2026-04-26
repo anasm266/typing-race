@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type {
   PlayerResult,
   PlayerRole,
@@ -28,10 +28,10 @@ export function EndScreen({
   onNewRace,
 }: EndScreenProps) {
   const result = room.result;
-  const [requested, setRequested] = useState(false);
 
   const iAmReady =
     !!role && !!room.rematchReady && room.rematchReady[role];
+  const requested = iAmReady;
   const opponentReady =
     !!role &&
     !!room.rematchReady &&
@@ -41,12 +41,6 @@ export function EndScreen({
   // A disconnect forfeit that later reconnects (via their session token)
   // should re-enable rematch — only the live WS count matters.
   const rivalPresent = room.playerCount >= 2;
-
-  // Keep local "requested" in sync with server echo, so if server clears
-  // (e.g., after cancel or rival leave) we track it too.
-  useEffect(() => {
-    setRequested(iAmReady);
-  }, [iAmReady]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
