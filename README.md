@@ -137,11 +137,12 @@ When D1 schema changes, apply the migration from the `worker` package:
 cd worker
 wrangler d1 execute typing-race-db --file=migrations/0001_races.sql --remote
 wrangler d1 execute typing-race-db --file=migrations/0002_room_analytics.sql --remote
+wrangler d1 execute typing-race-db --file=migrations/0003_room_analytics_source.sql --remote
 ```
 
 ## Load testing
 
-`load-tests/ws-rooms.js` contains a k6 scenario for concurrent room traffic over WebSockets. It is intended to verify room creation/join flow, welcome success rate, and round-trip latency under moderate load.
+`load-tests/ws-rooms.js` contains a k6 scenario for concurrent room traffic over WebSockets. It creates rooms with `source: "load_test"` so synthetic traffic can be filtered out of public analytics and recent-race history.
 
 Run it with local k6:
 

@@ -5,6 +5,7 @@ import {
   DEFAULT_CONFIG,
   type CreateRoomRequest,
   type CreateRoomResponse,
+  type RoomSource,
   type RoomConfig,
 } from "./protocol";
 
@@ -43,6 +44,10 @@ function json(data: unknown, status = 200): Response {
 
 function mergeConfig(partial?: Partial<RoomConfig>): RoomConfig {
   return { ...DEFAULT_CONFIG, ...partial };
+}
+
+function normalizeSource(source: unknown): RoomSource {
+  return source === "load_test" ? "load_test" : "user";
 }
 
 interface RecentRaceRow {
@@ -142,6 +147,7 @@ async function handleCreateRoom(
   }
 
   const config = mergeConfig(body.config);
+  const source = normalizeSource(body.source);
   const roomId = crypto.randomUUID();
   const passage = pickPassage(config.passageLength);
 
@@ -150,7 +156,7 @@ async function handleCreateRoom(
 
   const initResponse = await stub.fetch("https://do/__init", {
     method: "POST",
-    body: JSON.stringify({ roomId, passage, config }),
+    body: JSON.stringify({ roomId, passage, config, source }),
     headers: { "Content-Type": "application/json" },
   });
 
@@ -210,7 +216,8 @@ async function handleAnalytics(env: Env): Promise<Response> {
          SUM(CASE WHEN completed_successfully = 1 THEN 1 ELSE 0 END) AS races_completed,
          SUM(CASE WHEN race_end_reason = 'disconnect' THEN 1 ELSE 0 END) AS races_disconnected,
          SUM(pre_start_drop_count) AS pre_start_drops
-       FROM room_analytics`
+       FROM room_analytics
+       WHERE source = 'user'`
     ).first<AnalyticsSummaryRow>();
 
     const daily = await env.DB.prepare(
@@ -222,7 +229,7 @@ async function handleAnalytics(env: Env): Promise<Response> {
          SUM(CASE WHEN completed_successfully = 1 THEN 1 ELSE 0 END) AS races_completed,
          SUM(pre_start_drop_count) AS pre_start_drops
        FROM room_analytics
-       WHERE created_at >= ?
+       WHERE source = 'user' AND created_at >= ?
        GROUP BY date(created_at / 1000, 'unixepoch')
        ORDER BY day DESC
        LIMIT 14`
