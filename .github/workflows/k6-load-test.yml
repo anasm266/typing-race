@@ -34,10 +34,36 @@ jobs:
 
       - uses: grafana/setup-k6-action@v1
 
+      - name: Validate k6 target
+        env:
+          API_URL: ${{ vars.K6_API_URL }}
+          WS_URL: ${{ vars.K6_WS_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${API_URL}" ] || [ -z "${WS_URL}" ]; then
+            echo "K6_API_URL and K6_WS_URL must both be set to an explicit non-production target."
+            exit 1
+          fi
+
+          case "${API_URL}" in
+            *typing-race-api.kingzcopz266.workers.dev*)
+              echo "API_URL must not point at the production worker."
+              exit 1
+              ;;
+          esac
+
+          case "${WS_URL}" in
+            *typing-race-api.kingzcopz266.workers.dev*)
+              echo "WS_URL must not point at the production worker."
+              exit 1
+              ;;
+          esac
+
       - name: Run k6 (WebSocket room scenario)
         id: k6
         env:
-          # Optional repo Variables: K6_API_URL, K6_WS_URL (empty = use script defaults)
+          # Required repo Variables: K6_API_URL, K6_WS_URL (must target non-production)
           API_URL: ${{ vars.K6_API_URL }}
           WS_URL: ${{ vars.K6_WS_URL }}
         # --no-usage-report avoids K6_NO_USAGE_REPORT bool parsing (do not set it to "1")

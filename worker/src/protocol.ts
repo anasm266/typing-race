@@ -6,6 +6,7 @@
 export type PassageLength = "short" | "medium" | "long";
 export type EndMode = "finish" | "time";
 export type TimeLimit = 30 | 60 | 90;
+export type RoomSource = "user" | "load_test";
 
 export type PlayerRole = "host" | "guest";
 
@@ -155,6 +156,7 @@ export type ServerMsg =
 /** HTTP request body for POST /room */
 export interface CreateRoomRequest {
   config?: Partial<RoomConfig>;
+  source?: RoomSource;
 }
 
 export interface CreateRoomResponse {
