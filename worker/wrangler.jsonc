@@ -30,5 +30,34 @@
   ],
   "vars": {
     "SENTRY_DSN": "https://40ba518570ae0f5e78dc521b123e7afc@o4511239705264128.ingest.us.sentry.io/4511239724924928"
+  },
+  "env": {
+    "k6": {
+      "name": "typing-race-api-k6",
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "ROOM",
+            "class_name": "Room"
+          }
+        ]
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["Room"]
+        }
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "typing-race-db-k6",
+          "database_id": "badeb126-fd16-4bed-bec8-cb03ecee0005"
+        }
+      ],
+      "vars": {
+        "SENTRY_DSN": "https://40ba518570ae0f5e78dc521b123e7afc@o4511239705264128.ingest.us.sentry.io/4511239724924928"
+      }
+    }
   }
 }
