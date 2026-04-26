@@ -9,6 +9,7 @@ import type {
   RaceOutcome,
   RaceResult,
   RoomConfig,
+  RoomSource,
   ServerMsg,
 } from "./protocol";
 import {
@@ -51,6 +52,7 @@ interface InternalState extends PublicRoomState {
   _guestFinishedAt?: number;
   _hostSessionToken?: string;
   _guestSessionToken?: string;
+  _source: RoomSource;
   /** ms timestamp after which an empty room self-destroys. */
   _expiresAt?: number;
 }
@@ -63,6 +65,7 @@ function toPublic(s: InternalState): PublicRoomState {
     _guestFinishedAt,
     _hostSessionToken,
     _guestSessionToken,
+    _source,
     _expiresAt,
     ...pub
   } = s;
@@ -112,6 +115,7 @@ export class Room extends DurableObject<Env> {
       roomId: string;
       passage: PassageInfo;
       config: RoomConfig;
+      source: RoomSource;
     }>();
 
     this.state = {
@@ -121,6 +125,7 @@ export class Room extends DurableObject<Env> {
       status: "waiting",
       playerCount: 0,
       createdAt: Date.now(),
+      _source: body.source,
     };
     await this.persistState();
     await this.trackRoomCreated(this.state);
@@ -770,11 +775,13 @@ export class Room extends DurableObject<Env> {
     this.broadcast({ t: "state", room: toPublic(this.state) });
 
     // Write to the leaderboard DB; failures here must not affect the race.
-    this.ctx.waitUntil(
-      this.recordRace(snapshotForDb, result).catch(() => {
-        // swallow — captured in Sentry by withSentry wrapper if it re-throws
-      })
-    );
+    if (snapshotForDb._source !== "load_test") {
+      this.ctx.waitUntil(
+        this.recordRace(snapshotForDb, result).catch(() => {
+          // swallow — captured in Sentry by withSentry wrapper if it re-throws
+        })
+      );
+    }
   }
 
   private async recordRace(
@@ -848,6 +855,7 @@ export class Room extends DurableObject<Env> {
       startAt,
       _hostSessionToken: this.state._hostSessionToken,
       _guestSessionToken: this.state._guestSessionToken,
+      _source: this.state._source,
     };
     await this.persistState();
     await this.rescheduleAlarm();
@@ -887,14 +895,16 @@ export class Room extends DurableObject<Env> {
       `INSERT OR IGNORE INTO room_analytics (
          room_id,
          created_at,
+         source,
          config_end_mode,
          config_passage_length,
          config_time_limit
-       ) VALUES (?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?)`
     )
       .bind(
         state.roomId,
         state.createdAt,
+        state._source,
         state.config.endMode,
         state.config.passageLength,
         state.config.timeLimit
