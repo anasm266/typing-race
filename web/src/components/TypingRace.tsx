@@ -14,6 +14,10 @@ export function TypingRace() {
   const capsLockOn = useCapsLock(typing.state !== "done");
   const { state, handleKey, reset } = typing;
 
+  const restartCurrent = useCallback(() => {
+    reset();
+  }, [reset]);
+
   const restart = useCallback(() => {
     setPassage((prev) => randomPassage(prev.id));
     reset();
@@ -44,6 +48,12 @@ export function TypingRace() {
         return;
       }
 
+      if (e.key === "Escape") {
+        e.preventDefault();
+        restartCurrent();
+        return;
+      }
+
       if (e.key === "Backspace" || e.key === " " || e.key.length === 1) {
         e.preventDefault();
         handleKey(e.key);
@@ -51,7 +61,7 @@ export function TypingRace() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [state, handleKey, restart]);
+  }, [state, handleKey, restart, restartCurrent]);
 
   if (typing.state === "done") {
     return (
@@ -93,8 +103,7 @@ export function TypingRace() {
             <kbd className="text-fg-dim">tab</kbd> next passage
           </span>
           <span>
-            <kbd className="text-fg-dim">esc</kbd> restart{" "}
-            <span className="text-fg-dimmer/50">(coming)</span>
+            <kbd className="text-fg-dim">esc</kbd> restart
           </span>
         </div>
         <div className="text-[0.7rem] uppercase tracking-[0.15em] text-fg-dimmer">
