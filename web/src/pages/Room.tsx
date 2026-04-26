@@ -7,6 +7,10 @@ import { ReadyCheck } from "../components/ReadyCheck";
 export function Room() {
   const params = useParams<{ id: string }>();
   const roomId = params.id ?? "";
+  return <RoomSession key={roomId} roomId={roomId} />;
+}
+
+function RoomSession({ roomId }: { roomId: string }) {
   const [, setLocation] = useLocation();
   const {
     roomState,
