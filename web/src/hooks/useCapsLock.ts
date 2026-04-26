@@ -4,10 +4,7 @@ export function useCapsLock(active = true) {
   const [capsLockOn, setCapsLockOn] = useState(false);
 
   useEffect(() => {
-    if (!active) {
-      setCapsLockOn(false);
-      return;
-    }
+    if (!active) return;
 
     function syncCapsLock(e: KeyboardEvent) {
       setCapsLockOn(e.getModifierState?.("CapsLock") ?? false);
@@ -28,5 +25,5 @@ export function useCapsLock(active = true) {
     };
   }, [active]);
 
-  return capsLockOn;
+  return active ? capsLockOn : false;
 }

@@ -75,13 +75,6 @@ export function useRoom(roomId: string): UseRoomResult {
 
   useEffect(() => {
     unmountedRef.current = false;
-    setConnectionState("connecting");
-    setError(null);
-    setRoomState(null);
-    setRole(null);
-    setOpponentProgress(null);
-    setOpponentFinish(null);
-    setOpponentReaction(null);
     retryCountRef.current = 0;
 
     function connect() {

@@ -48,6 +48,17 @@ export function RaceView({
   const typing = useTyping(passage.text, {
     startAt: racing ? startAt : undefined,
   });
+  const {
+    state: typingState,
+    typed,
+    correctChars,
+    totalKeystrokes,
+    elapsedMs,
+    wpm,
+    wpmSamples,
+    handleKey,
+  } = typing;
+  const selfAccuracy = calcAccuracy(correctChars, totalKeystrokes);
 
   const now = useNow(status === "starting" || racing);
 
@@ -83,8 +94,8 @@ export function RaceView({
       // Translated into a synthetic "CtrlBackspace" key id for useTyping.
       if (e.key === "Backspace" && (e.ctrlKey || e.altKey)) {
         e.preventDefault();
-        if (status === "racing" && typing.state !== "done") {
-          typing.handleKey("CtrlBackspace");
+        if (status === "racing" && typingState !== "done") {
+          handleKey("CtrlBackspace");
         }
         return;
       }
@@ -94,63 +105,47 @@ export function RaceView({
 
       if (e.key === "Backspace" || e.key === " " || e.key.length === 1) {
         e.preventDefault();
-        if (status === "racing" && typing.state !== "done") {
-          typing.handleKey(e.key);
+        if (status === "racing" && typingState !== "done") {
+          handleKey(e.key);
         }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [status, typing.state, typing.handleKey]);
+  }, [status, typingState, handleKey]);
 
   // Broadcast progress on every local position change.
-  const latestRef = useRef({
-    correctChars: 0,
-    wpm: 0,
-    accuracy: 100,
-  });
-  latestRef.current = {
-    correctChars: typing.correctChars,
-    wpm: typing.wpm,
-    accuracy: calcAccuracy(
-      typing.correctChars,
-      typing.totalKeystrokes
-    ),
-  };
   useEffect(() => {
     if (!racing) return;
-    if (typing.state === "idle") return;
+    if (typingState === "idle") return;
     send({
       t: "progress",
-      pos: typing.typed.length,
-      correctCount: latestRef.current.correctChars,
-      wpm: latestRef.current.wpm,
-      accuracy: latestRef.current.accuracy,
+      pos: typed.length,
+      correctCount: correctChars,
+      wpm,
+      accuracy: selfAccuracy,
     });
-  }, [typing.typed.length, racing, typing.state, send]);
+  }, [typed.length, racing, typingState, correctChars, wpm, selfAccuracy, send]);
 
   // One-shot finished message.
   const finishedSentRef = useRef(false);
   useEffect(() => {
-    if (typing.state !== "done") return;
+    if (typingState !== "done") return;
     if (finishedSentRef.current) return;
     finishedSentRef.current = true;
     send({
       t: "finished",
-      wpm: typing.wpm,
-      accuracy: calcAccuracy(
-        typing.correctChars,
-        typing.totalKeystrokes
-      ),
-      elapsedMs: typing.elapsedMs,
-      correctCount: typing.correctChars,
+      wpm,
+      accuracy: selfAccuracy,
+      elapsedMs,
+      correctCount: correctChars,
     });
   }, [
-    typing.state,
-    typing.wpm,
-    typing.correctChars,
-    typing.totalKeystrokes,
-    typing.elapsedMs,
+    typingState,
+    wpm,
+    selfAccuracy,
+    elapsedMs,
+    correctChars,
     send,
   ]);
 
@@ -164,7 +159,7 @@ export function RaceView({
       <EndScreen
         room={room}
         role={role}
-        mySamples={typing.wpmSamples}
+        mySamples={wpmSamples}
         opponentSamples={opponentSamples}
         onRematchRequest={() => send({ t: "rematch_request" })}
         onRematchCancel={() => send({ t: "rematch_cancel" })}
@@ -177,7 +172,7 @@ export function RaceView({
     opponentProgress?.pos ??
     (opponentFinish ? passage.text.length : undefined);
 
-  const myRoleDone = typing.state === "done";
+  const myRoleDone = typingState === "done";
   const finishGraceForMe: FinishGraceInfo | null =
     room.finishGrace && role
       ? room.finishGrace.firstFinisher === role
@@ -203,12 +198,9 @@ export function RaceView({
         <StatsBar
           room={room}
           now={now}
-          selfElapsedMs={typing.elapsedMs}
-          selfWpm={typing.wpm}
-          selfAccuracy={calcAccuracy(
-            typing.correctChars,
-            typing.totalKeystrokes
-          )}
+          selfElapsedMs={elapsedMs}
+          selfWpm={wpm}
+          selfAccuracy={selfAccuracy}
           opponentWpm={
             opponentProgress?.wpm ?? opponentFinish?.wpm ?? null
           }
@@ -219,14 +211,14 @@ export function RaceView({
 
       <div className="w-full max-w-[800px]">
         <TouchKeyboardInput
-          typed={typing.typed}
+          typed={typed}
           canFocus={status === "starting" || status === "racing"}
-          canType={status === "racing" && typing.state !== "done"}
-          onKey={typing.handleKey}
+          canType={status === "racing" && typingState !== "done"}
+          onKey={handleKey}
         >
           <Passage
             passage={passage.text}
-            typed={typing.typed}
+            typed={typed}
             opponentPos={opponentPos}
           />
         </TouchKeyboardInput>
