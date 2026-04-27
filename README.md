@@ -165,10 +165,25 @@ npm run k6:load
 
 ### Continuous runs (CI)
 
-[`.github/workflows/k6-load-test.yml`](./.github/workflows/k6-load-test.yml) runs this scenario on a **weekly schedule** (Sundays 06:00 UTC), on **manual** workflow dispatch, and when `load-tests/` or the workflow file changes on `main`. Each run uploads a **`k6-summary` artifact** (JSON) you can download from the Actions run page—pass or fail, so you keep a simple history.
+[`.github/workflows/k6-load-test.yml`](./.github/workflows/k6-load-test.yml) runs this scenario on a **weekly schedule** (Sundays 06:00 UTC), on **manual** workflow dispatch, and when `load-tests/` or the workflow file changes on `main`. Each run uploads a **`k6-summary` artifact** (JSON) you can download from the Actions run page, pass or fail, so you keep a simple history.
 
-Optional **repository Variables** (Settings → Secrets and variables → Actions → Variables): `K6_API_URL` and `K6_WS_URL` to point at a different worker; if unset, the script defaults apply.
+Required repository Variables (Settings -> Secrets and variables -> Actions -> Variables): `K6_API_URL` and `K6_WS_URL`. CI fails fast if either variable is missing or points at the production worker hostname.
 
+## Standard CI
+
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs on every pull request and on pushes to `main`. It installs dependencies with `npm ci` and runs:
+
+```bash
+npm run check
+```
+
+That command validates the repo with:
+
+```bash
+npm run lint:web
+npm run build:web
+npm run typecheck:worker
+```
 ## Observability
 
 - Sentry captures frontend errors plus Worker and Durable Object exceptions
