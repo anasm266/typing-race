@@ -203,9 +203,17 @@ export const PASSAGES: Passage[] = RAW.map((p) => {
   return { ...p, wordCount, length: bucket(wordCount) };
 });
 
-export function randomPassage(exclude?: string): Passage {
-  const pool = exclude
-    ? PASSAGES.filter((p) => p.id !== exclude)
+export function randomPassage(
+  length?: Passage["length"],
+  exclude?: string
+): Passage {
+  let pool = length
+    ? PASSAGES.filter((p) => p.length === length)
     : PASSAGES;
+  if (exclude) {
+    const filtered = pool.filter((p) => p.id !== exclude);
+    if (filtered.length > 0) pool = filtered;
+  }
+  if (pool.length === 0) pool = PASSAGES;
   return pool[Math.floor(Math.random() * pool.length)];
 }

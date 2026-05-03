@@ -2,6 +2,10 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { createRoom } from "../lib/api";
 import {
+  getSavedPassageLength,
+  savePassageLength,
+} from "../lib/preferences";
+import {
   DEFAULT_CONFIG,
   type EndMode,
   type PassageLength,
@@ -11,7 +15,11 @@ import {
 
 export function Home() {
   const [, setLocation] = useLocation();
-  const [config, setConfig] = useState<RoomConfig>(DEFAULT_CONFIG);
+  const [config, setConfig] = useState<RoomConfig>(() => ({
+    ...DEFAULT_CONFIG,
+    passageLength:
+      getSavedPassageLength() ?? DEFAULT_CONFIG.passageLength,
+  }));
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,7 +56,10 @@ export function Home() {
               ] satisfies Array<{ value: PassageLength; label: string }>
             }
             onChange={(v) =>
-              setConfig((c) => ({ ...c, passageLength: v }))
+              setConfig((c) => {
+                savePassageLength(v);
+                return { ...c, passageLength: v };
+              })
             }
           />
         </Field>

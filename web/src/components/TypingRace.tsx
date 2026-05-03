@@ -7,9 +7,16 @@ import { Passage as PassageView } from "./Passage";
 import { TouchKeyboardInput } from "./TouchKeyboardInput";
 import { Stats } from "./Stats";
 import { ResultScreen } from "./ResultScreen";
+import type { PassageLength } from "../lib/protocol";
 
-export function TypingRace() {
-  const [passage, setPassage] = useState<Passage>(() => randomPassage());
+export function TypingRace({
+  passageLength,
+}: {
+  passageLength?: PassageLength;
+}) {
+  const [passage, setPassage] = useState<Passage>(() =>
+    randomPassage(passageLength)
+  );
   const typing = useTyping(passage.text);
   const capsLockOn = useCapsLock(typing.state !== "done");
   const { state, handleKey, reset } = typing;
@@ -19,9 +26,9 @@ export function TypingRace() {
   }, [reset]);
 
   const restart = useCallback(() => {
-    setPassage((prev) => randomPassage(prev.id));
+    setPassage((prev) => randomPassage(passageLength, prev.id));
     reset();
-  }, [reset]);
+  }, [passageLength, reset]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
