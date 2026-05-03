@@ -904,6 +904,7 @@ export class Room extends DurableObject<Env> {
 
     const result = computeResult(this.state, reason);
     const snapshotForDb = this.state;
+    const endedAt = Date.now();
     this.state = {
       ...this.state,
       status: "ended",
@@ -912,31 +913,47 @@ export class Room extends DurableObject<Env> {
       finishGrace: undefined,
     };
     await this.persistState();
-    await this.trackRaceEnded(snapshotForDb.roomId, result);
+    await this.recordRaceEnd(snapshotForDb, result, endedAt);
     await this.rescheduleAlarm();
     this.broadcast({ t: "state", room: toPublic(this.state) });
-
-    // Write to the leaderboard DB; failures here must not affect the race.
-    if (snapshotForDb._source !== "load_test") {
-      this.ctx.waitUntil(
-        this.recordRace(snapshotForDb, result).catch(() => {
-          // swallow — captured in Sentry by withSentry wrapper if it re-throws
-        })
-      );
-    }
   }
 
-  private async recordRace(
+  private async recordRaceEnd(
     stateAtEnd: InternalState,
-    result: RaceResult
+    result: RaceResult,
+    endedAt: number
   ): Promise<void> {
+    const completedSuccessfully = result.endReason === "disconnect" ? 0 : 1;
+    const analytics = this.env.DB.prepare(
+      `UPDATE room_analytics
+          SET race_ended_at = COALESCE(race_ended_at, ?),
+              race_end_reason = COALESCE(race_end_reason, ?),
+              outcome = COALESCE(outcome, ?),
+              completed_successfully = CASE
+                WHEN completed_successfully = 1 THEN 1
+                ELSE ?
+              END
+        WHERE room_id = ?`
+    ).bind(
+      endedAt,
+      result.endReason,
+      result.outcome,
+      completedSuccessfully,
+      stateAtEnd.roomId
+    );
+
+    if (stateAtEnd._source === "load_test") {
+      await analytics.run();
+      return;
+    }
+
     const duration =
       result.host.elapsedMs > result.guest.elapsedMs
         ? result.host.elapsedMs
         : result.guest.elapsedMs;
 
-    await this.env.DB.prepare(
-      `INSERT INTO races (
+    const recent = this.env.DB.prepare(
+      `INSERT OR REPLACE INTO races (
          id, finished_at, end_reason, outcome,
          passage_id, passage_length, passage_words,
          duration_ms,
@@ -947,7 +964,7 @@ export class Room extends DurableObject<Env> {
     )
       .bind(
         stateAtEnd.roomId,
-        Date.now(),
+        endedAt,
         result.endReason,
         result.outcome,
         stateAtEnd.passage.id,
@@ -960,8 +977,9 @@ export class Room extends DurableObject<Env> {
         result.guest.accuracy,
         result.host.finishedPassage ? 1 : 0,
         result.guest.finishedPassage ? 1 : 0
-      )
-      .run();
+      );
+
+    await this.env.DB.batch([analytics, recent]);
   }
 
   /** Transition from ready_check into the 3-2-1 starting countdown. */
@@ -1227,31 +1245,6 @@ export class Room extends DurableObject<Env> {
       .run();
   }
 
-  private async trackRaceEnded(
-    roomId: string,
-    result: RaceResult
-  ): Promise<void> {
-    const completedSuccessfully = result.endReason === "disconnect" ? 0 : 1;
-    await this.env.DB.prepare(
-      `UPDATE room_analytics
-          SET race_ended_at = COALESCE(race_ended_at, ?),
-              race_end_reason = COALESCE(race_end_reason, ?),
-              outcome = COALESCE(outcome, ?),
-              completed_successfully = CASE
-                WHEN completed_successfully = 1 THEN 1
-                ELSE ?
-              END
-        WHERE room_id = ?`
-    )
-      .bind(
-        Date.now(),
-        result.endReason,
-        result.outcome,
-        completedSuccessfully,
-        roomId
-      )
-      .run();
-  }
 }
 
 function computeResult(
