@@ -157,6 +157,36 @@ body {
   position: relative;
 }
 
+.smooth-caret {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2px;
+  pointer-events: none;
+  transition:
+    transform 95ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 95ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, height;
+  z-index: 2;
+}
+
+.smooth-caret-self,
+.smooth-caret-playerOne {
+  background: var(--color-accent);
+  box-shadow: 0 0 8px var(--color-accent);
+}
+
+.smooth-caret-self {
+  animation: caretBlink 1s steps(2, start) infinite;
+}
+
+.smooth-caret-opponent,
+.smooth-caret-playerTwo {
+  background: var(--color-opponent);
+  box-shadow: 0 0 8px var(--color-opponent);
+  opacity: 0.8;
+}
+
 .passage-char[data-cursor="true"]::before {
   content: "";
   position: absolute;
