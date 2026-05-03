@@ -36,30 +36,15 @@ export function Home() {
   }
 
   return (
-    <div className="flex flex-col items-center gap-10 w-full max-w-[640px]">
+    <div className="flex flex-col items-center gap-12 w-full max-w-[560px]">
       <div className="flex flex-col items-center gap-2 text-center">
         <h2 className="text-3xl md:text-4xl">race a friend</h2>
         <p className="text-fg-dim text-sm md:text-base">
-          create a room. send the link. your friend joins and the race
-          starts in seconds.
+          share one link. race starts in seconds. no signup.
         </p>
-        <p className="text-fg-dimmer text-xs md:text-sm">
-          no signup. anyone else with the same link can watch live as a
-          spectator.
+        <p className="text-fg-dimmer text-xs">
+          two racers join. extra visitors watch live.
         </p>
-      </div>
-
-      <div
-        aria-label="how it works"
-        className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full"
-      >
-        <StepCard step="1" title="create" body="pick the race settings" />
-        <StepCard step="2" title="send" body="drop one link in chat" />
-        <StepCard
-          step="3"
-          title="race"
-          body="two racers type while extras watch"
-        />
       </div>
 
       <div className="flex flex-col gap-6 w-full">
@@ -162,26 +147,6 @@ export function Home() {
           </Link>
         </div>
       </div>
-    </div>
-  );
-}
-
-function StepCard({
-  step,
-  title,
-  body,
-}: {
-  step: string;
-  title: string;
-  body: string;
-}) {
-  return (
-    <div className="border border-border bg-bg-soft/40 px-4 py-3 text-left">
-      <div className="flex items-center gap-2">
-        <span className="text-[0.65rem] text-accent">0{step}</span>
-        <span className="text-sm text-fg">{title}</span>
-      </div>
-      <p className="mt-1 text-xs leading-relaxed text-fg-dim">{body}</p>
     </div>
   );
 }
