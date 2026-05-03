@@ -21,7 +21,7 @@ interface RecentRace {
 
 type Status =
   | { kind: "loading" }
-  | { kind: "ok"; races: RecentRace[] }
+  | { kind: "ok"; races: RecentRace[]; fetchedAt: number }
   | { kind: "error"; message: string };
 
 export function Recent() {
@@ -32,7 +32,11 @@ export function Recent() {
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = (await r.json()) as { races: RecentRace[] };
-        setStatus({ kind: "ok", races: data.races ?? [] });
+        setStatus({
+          kind: "ok",
+          races: data.races ?? [],
+          fetchedAt: Date.now(),
+        });
       })
       .catch((err: Error) => {
         if (!signal?.aborted) {
@@ -70,6 +74,20 @@ export function Recent() {
         <p className="text-xs text-fg-dimmer">
           every race that makes it to an end screen gets logged here
         </p>
+        {status.kind === "ok" && (
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-3 text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
+            <span>
+              {status.races.length} loaded · updated {timeAgo(status.fetchedAt)}
+            </span>
+            <button
+              type="button"
+              onClick={() => loadRecent()}
+              className="border border-border px-2 py-1 text-fg-dim transition-colors hover:border-accent hover:text-accent"
+            >
+              refresh
+            </button>
+          </div>
+        )}
       </header>
 
       {status.kind === "loading" && (
@@ -139,6 +157,9 @@ function RaceRow({ race }: { race: RecentRace }) {
 
       <div className="flex flex-col items-end text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
         <span>{race.passage_length}</span>
+        <span className="text-fg-dimmer normal-case tracking-normal">
+          {formatRaceTimeUtc(race.finished_at)}
+        </span>
         <span className="text-fg-dimmer">
           {endReasonLabel(race.end_reason)}
         </span>
@@ -191,6 +212,17 @@ function timeAgo(ms: number): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+function formatRaceTimeUtc(ms: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  }).format(ms) + " UTC";
 }
 
 function endReasonLabel(reason: RecentRace["end_reason"]): string {
