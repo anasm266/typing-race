@@ -796,11 +796,26 @@ export class Room extends DurableObject<Env> {
     // fired, wipe the room so future connections see "room_not_found".
     if (
       this.state._expiresAt !== undefined &&
-      now >= this.state._expiresAt &&
-      this.state.playerCount === 0
+      now >= this.state._expiresAt
     ) {
-      this.state = null;
-      await this.ctx.storage.deleteAll();
+      const livePlayers = this.countPlayerSockets();
+      const liveSpectators = this.countSpectatorSockets();
+
+      if (livePlayers + liveSpectators === 0) {
+        this.state = null;
+        await this.ctx.storage.delete("state");
+        await this.ctx.storage.deleteAlarm();
+        return;
+      }
+
+      this.state = {
+        ...this.state,
+        playerCount: livePlayers,
+        spectatorCount: liveSpectators,
+        _expiresAt: undefined,
+      };
+      await this.persistState();
+      await this.rescheduleAlarm();
       return;
     }
 
