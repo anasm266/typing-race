@@ -11,7 +11,19 @@ Open a room, send it to a friend, and race immediately. No accounts, no lobby br
 - Analytics API: [typing-race-api.kingzcopz266.workers.dev/analytics](https://typing-race-api.kingzcopz266.workers.dev/analytics)
 - Public status page: [typing-race.betteruptime.com](https://typing-race.betteruptime.com)
 
-<!-- Add demo GIF here after recording. -->
+## Demo
+
+### Racer flow
+
+Create a room, share the link, wait for your rival to lock in, race, then compare results on the WPM graph.
+
+![Racer flow demo](docs/assets/demo-racer.gif)
+
+### Live spectator mode
+
+After two racers join, anyone else opening the same room link gets a watch-only live view.
+
+![Spectator mode demo](docs/assets/demo-spectator.gif)
 
 ## What it does
 
