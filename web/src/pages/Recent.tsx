@@ -21,7 +21,7 @@ interface RecentRace {
 
 type Status =
   | { kind: "loading" }
-  | { kind: "ok"; races: RecentRace[]; fetchedAt: number }
+  | { kind: "ok"; races: RecentRace[] }
   | { kind: "error"; message: string };
 
 export function Recent() {
@@ -32,11 +32,7 @@ export function Recent() {
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = (await r.json()) as { races: RecentRace[] };
-        setStatus({
-          kind: "ok",
-          races: data.races ?? [],
-          fetchedAt: Date.now(),
-        });
+        setStatus({ kind: "ok", races: data.races ?? [] });
       })
       .catch((err: Error) => {
         if (!signal?.aborted) {
@@ -74,20 +70,6 @@ export function Recent() {
         <p className="text-xs text-fg-dimmer">
           every race that makes it to an end screen gets logged here
         </p>
-        {status.kind === "ok" && (
-          <div className="mt-2 flex flex-wrap items-center justify-center gap-3 text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
-            <span>
-              {status.races.length} loaded · updated {timeAgo(status.fetchedAt)}
-            </span>
-            <button
-              type="button"
-              onClick={() => loadRecent()}
-              className="border border-border px-2 py-1 text-fg-dim transition-colors hover:border-accent hover:text-accent"
-            >
-              refresh
-            </button>
-          </div>
-        )}
       </header>
 
       {status.kind === "loading" && (
