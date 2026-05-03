@@ -45,7 +45,27 @@ function json(data: unknown, status = 200): Response {
 }
 
 function mergeConfig(partial?: Partial<RoomConfig>): RoomConfig {
-  return { ...DEFAULT_CONFIG, ...partial };
+  const passageLength =
+    partial?.passageLength === "word" ||
+    partial?.passageLength === "short" ||
+    partial?.passageLength === "medium" ||
+    partial?.passageLength === "long"
+      ? partial.passageLength
+      : DEFAULT_CONFIG.passageLength;
+  const endMode =
+    passageLength === "word"
+      ? "finish"
+      : partial?.endMode === "time" || partial?.endMode === "finish"
+        ? partial.endMode
+        : DEFAULT_CONFIG.endMode;
+  const timeLimit =
+    partial?.timeLimit === 30 ||
+    partial?.timeLimit === 60 ||
+    partial?.timeLimit === 90
+      ? partial.timeLimit
+      : DEFAULT_CONFIG.timeLimit;
+
+  return { endMode, passageLength, timeLimit };
 }
 
 function normalizeSource(source: unknown): RoomSource {

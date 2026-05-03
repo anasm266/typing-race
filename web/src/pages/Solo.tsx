@@ -28,7 +28,7 @@ export function Solo() {
       </div>
 
       <div className="flex flex-wrap justify-center gap-2">
-        {(["short", "medium", "long"] satisfies PassageLength[]).map(
+        {(["word", "short", "medium", "long"] satisfies PassageLength[]).map(
           (length) => {
             const selected = length === passageLength;
             return (

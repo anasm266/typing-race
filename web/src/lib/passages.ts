@@ -1,8 +1,10 @@
+import type { PassageLength } from "./protocol";
+
 export interface Passage {
   id: string;
   text: string;
   wordCount: number;
-  length: "short" | "medium" | "long";
+  length: PassageLength;
 }
 
 function w(text: string): number {
@@ -10,10 +12,44 @@ function w(text: string): number {
 }
 
 function bucket(wordCount: number): Passage["length"] {
+  if (wordCount === 1) return "word";
   if (wordCount <= 20) return "short";
   if (wordCount <= 45) return "medium";
   return "long";
 }
+
+const WORD_RAW: Array<{ id: string; text: string }> = [
+  { id: "word_thunder", text: "thunder" },
+  { id: "word_glitch", text: "glitch" },
+  { id: "word_rocket", text: "rocket" },
+  { id: "word_panic", text: "panic" },
+  { id: "word_velocity", text: "velocity" },
+  { id: "word_shadow", text: "shadow" },
+  { id: "word_flicker", text: "flicker" },
+  { id: "word_rival", text: "rival" },
+  { id: "word_overdrive", text: "overdrive" },
+  { id: "word_spark", text: "spark" },
+  { id: "word_turbo", text: "turbo" },
+  { id: "word_signal", text: "signal" },
+  { id: "word_blizzard", text: "blizzard" },
+  { id: "word_neon", text: "neon" },
+  { id: "word_cascade", text: "cascade" },
+  { id: "word_midnight", text: "midnight" },
+  { id: "word_orbit", text: "orbit" },
+  { id: "word_static", text: "static" },
+  { id: "word_summit", text: "summit" },
+  { id: "word_launch", text: "launch" },
+  { id: "word_cipher", text: "cipher" },
+  { id: "word_drift", text: "drift" },
+  { id: "word_ignite", text: "ignite" },
+  { id: "word_pursuit", text: "pursuit" },
+  { id: "word_voltage", text: "voltage" },
+  { id: "word_rapid", text: "rapid" },
+  { id: "word_momentum", text: "momentum" },
+  { id: "word_flash", text: "flash" },
+  { id: "word_charge", text: "charge" },
+  { id: "word_winner", text: "winner" },
+];
 
 const RAW: Array<{ id: string; text: string }> = [
   {
@@ -198,7 +234,7 @@ const RAW: Array<{ id: string; text: string }> = [
   },
 ];
 
-export const PASSAGES: Passage[] = RAW.map((p) => {
+export const PASSAGES: Passage[] = [...WORD_RAW, ...RAW].map((p) => {
   const wordCount = w(p.text);
   return { ...p, wordCount, length: bucket(wordCount) };
 });

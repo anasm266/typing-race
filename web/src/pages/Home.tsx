@@ -27,7 +27,11 @@ export function Home() {
     setCreating(true);
     setError(null);
     try {
-      const { roomId } = await createRoom(config);
+      const safeConfig =
+        config.passageLength === "word"
+          ? { ...config, endMode: "finish" as const }
+          : config;
+      const { roomId } = await createRoom(safeConfig);
       setLocation(`/room/${roomId}`);
     } catch (e) {
       setError((e as Error).message ?? "failed");
@@ -53,6 +57,7 @@ export function Home() {
             value={config.passageLength}
             options={
               [
+                { value: "word", label: "word" },
                 { value: "short", label: "short" },
                 { value: "medium", label: "medium" },
                 { value: "long", label: "long" },
@@ -61,40 +66,51 @@ export function Home() {
             onChange={(v) =>
               setConfig((c) => {
                 savePassageLength(v);
-                return { ...c, passageLength: v };
+                return {
+                  ...c,
+                  passageLength: v,
+                  endMode: v === "word" ? "finish" : c.endMode,
+                };
               })
             }
           />
+          {config.passageLength === "word" && (
+            <span className="text-xs text-fg-dimmer">
+              one-word duel. fastest clean hit wins.
+            </span>
+          )}
         </Field>
 
-        <Field label="end mode">
-          <PillGroup
-            value={config.endMode}
-            options={
-              [
-                {
-                  value: "finish",
-                  label: "finish passage",
-                  description:
-                    "First to finish wins. After one racer finishes, the other gets 10 seconds to close the gap before the result locks.",
-                },
-                {
-                  value: "time",
-                  label: "time limit",
-                  description:
-                    "Race against the clock. When time runs out, the result is scored wherever both racers ended up, finished or not.",
-                },
-              ] satisfies Array<{
-                value: EndMode;
-                label: string;
-                description: string;
-              }>
-            }
-            onChange={(v) => setConfig((c) => ({ ...c, endMode: v }))}
-          />
-        </Field>
+        {config.passageLength !== "word" && (
+          <Field label="end mode">
+            <PillGroup
+              value={config.endMode}
+              options={
+                [
+                  {
+                    value: "finish",
+                    label: "finish passage",
+                    description:
+                      "First to finish wins. After one racer finishes, the other gets 10 seconds to close the gap before the result locks.",
+                  },
+                  {
+                    value: "time",
+                    label: "time limit",
+                    description:
+                      "Race against the clock. When time runs out, the result is scored wherever both racers ended up, finished or not.",
+                  },
+                ] satisfies Array<{
+                  value: EndMode;
+                  label: string;
+                  description: string;
+                }>
+              }
+              onChange={(v) => setConfig((c) => ({ ...c, endMode: v }))}
+            />
+          </Field>
+        )}
 
-        {config.endMode === "time" && (
+        {config.passageLength !== "word" && config.endMode === "time" && (
           <Field label="time limit">
             <PillGroup
               value={config.timeLimit}

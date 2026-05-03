@@ -2,6 +2,7 @@ import type { PassageLength } from "./protocol";
 
 const PASSAGE_LENGTH_KEY = "typing-race:passage-length";
 const PASSAGE_LENGTHS = new Set<PassageLength>([
+  "word",
   "short",
   "medium",
   "long",

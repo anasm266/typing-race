@@ -3,7 +3,7 @@
  * Keep this file in sync with worker/src/protocol.ts
  */
 
-export type PassageLength = "short" | "medium" | "long";
+export type PassageLength = "word" | "short" | "medium" | "long";
 export type EndMode = "finish" | "time";
 export type TimeLimit = 30 | 60 | 90;
 export type RoomSource = "user" | "load_test";
