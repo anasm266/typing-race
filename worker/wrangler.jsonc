@@ -28,6 +28,24 @@
       "database_id": "0d434b1c-0446-40a5-b392-91010053003a"
     }
   ],
+  "ratelimits": [
+    {
+      "name": "ROOM_CREATE_RATE_LIMITER",
+      "namespace_id": "2661001",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "WS_JOIN_RATE_LIMITER",
+      "namespace_id": "2661002",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ],
   "vars": {
     "SENTRY_DSN": "https://40ba518570ae0f5e78dc521b123e7afc@o4511239705264128.ingest.us.sentry.io/4511239724924928"
   },
@@ -53,6 +71,24 @@
           "binding": "DB",
           "database_name": "typing-race-db-k6",
           "database_id": "badeb126-fd16-4bed-bec8-cb03ecee0005"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "ROOM_CREATE_RATE_LIMITER",
+          "namespace_id": "2662001",
+          "simple": {
+            "limit": 1000,
+            "period": 60
+          }
+        },
+        {
+          "name": "WS_JOIN_RATE_LIMITER",
+          "namespace_id": "2662002",
+          "simple": {
+            "limit": 5000,
+            "period": 60
+          }
         }
       ],
       "vars": {

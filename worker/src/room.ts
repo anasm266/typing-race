@@ -25,6 +25,8 @@ interface Env {
   ROOM: DurableObjectNamespace<Room>;
   DB: D1Database;
   SENTRY_DSN: string;
+  ROOM_CREATE_RATE_LIMITER: RateLimit;
+  WS_JOIN_RATE_LIMITER: RateLimit;
 }
 
 interface PlayerAttachment {

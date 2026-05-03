@@ -23,6 +23,8 @@ export interface Env {
   ROOM: DurableObjectNamespace<RoomClass>;
   DB: D1Database;
   SENTRY_DSN: string;
+  ROOM_CREATE_RATE_LIMITER: RateLimit;
+  WS_JOIN_RATE_LIMITER: RateLimit;
 }
 
 const CORS_HEADERS = {
@@ -81,6 +83,38 @@ interface AnalyticsSummaryRow {
   spectator_watch_ms_total: number;
 }
 
+function clientKey(request: Request, scope: string): string {
+  const ip =
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
+  return `${scope}:${ip}`;
+}
+
+function tooManyRequests(scope: string): Response {
+  return json(
+    {
+      error: "rate_limited",
+      message:
+        scope === "room"
+          ? "too many rooms created from this connection"
+          : "too many room connections from this connection",
+    },
+    429
+  );
+}
+
+async function isLimited(
+  limiter: RateLimit,
+  request: Request,
+  scope: string
+): Promise<boolean> {
+  const { success } = await limiter.limit({
+    key: clientKey(request, scope),
+  });
+  return !success;
+}
+
 interface AnalyticsDailyRow {
   day: string;
   rooms_created: number;
@@ -113,6 +147,11 @@ const handler = {
     }
 
     if (url.pathname === "/room" && request.method === "POST") {
+      if (
+        await isLimited(env.ROOM_CREATE_RATE_LIMITER, request, "room")
+      ) {
+        return tooManyRequests("room");
+      }
       return handleCreateRoom(request, env);
     }
 
@@ -128,6 +167,9 @@ const handler = {
       /^\/room\/([a-zA-Z0-9-]+)\/ws$/
     );
     if (wsMatch) {
+      if (await isLimited(env.WS_JOIN_RATE_LIMITER, request, "ws")) {
+        return tooManyRequests("ws");
+      }
       return handleWsUpgrade(request, env, wsMatch[1]);
     }
 
