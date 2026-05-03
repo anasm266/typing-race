@@ -91,6 +91,7 @@ function zeroProgress(): PlayerProgress {
 const SUPERSEDE_CODE = 4001;
 const MAX_SPECTATORS = 25;
 const SPECTATOR_FULL_CODE = 4010;
+const PROGRESS_PERSIST_INTERVAL_MS = 2_000;
 
 function normalizeAttachment(ws: WebSocket): Attachment | null {
   const raw = ws.deserializeAttachment() as
@@ -130,6 +131,7 @@ function normalizeAttachment(ws: WebSocket): Attachment | null {
 export class Room extends DurableObject<Env> {
   private state: InternalState | null = null;
   private ready = false;
+  private lastProgressPersistAt = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -459,7 +461,7 @@ export class Room extends DurableObject<Env> {
         } else {
           this.state = { ...this.state, _guestProgress: progress };
         }
-        await this.persistState();
+        await this.maybePersistProgress(progress.at);
         this.broadcastToPlayersExcept(ws, {
           t: "opponent_progress",
           pos: msg.pos,
@@ -1085,6 +1087,25 @@ export class Room extends DurableObject<Env> {
   private async persistState(): Promise<void> {
     if (!this.state) return;
     await this.ctx.storage.put("state", this.state);
+  }
+
+  private async maybePersistProgress(now: number): Promise<void> {
+    if (!this.state) return;
+    if (now - this.lastProgressPersistAt < PROGRESS_PERSIST_INTERVAL_MS) return;
+
+    this.lastProgressPersistAt = now;
+    const snapshot = this.state;
+    try {
+      await this.persistStateSnapshot(snapshot);
+    } catch (error) {
+      console.warn(
+        `[room ${snapshot.roomId}] progress snapshot persist failed: ${String(error)}`
+      );
+    }
+  }
+
+  private async persistStateSnapshot(snapshot: InternalState): Promise<void> {
+    await this.ctx.storage.put("state", snapshot);
   }
 
   private safeSend(ws: WebSocket, msg: ServerMsg): void {
