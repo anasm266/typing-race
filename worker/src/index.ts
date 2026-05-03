@@ -74,6 +74,11 @@ interface AnalyticsSummaryRow {
   races_completed: number;
   races_disconnected: number;
   pre_start_drops: number;
+  spectator_join_count: number;
+  spectator_leave_count: number;
+  spectator_max_concurrent: number;
+  rooms_watched: number;
+  spectator_watch_ms_total: number;
 }
 
 interface AnalyticsDailyRow {
@@ -83,6 +88,11 @@ interface AnalyticsDailyRow {
   races_started: number;
   races_completed: number;
   pre_start_drops: number;
+  spectator_join_count: number;
+  spectator_leave_count: number;
+  spectator_max_concurrent: number;
+  rooms_watched: number;
+  spectator_watch_ms_total: number;
 }
 
 const handler = {
@@ -215,7 +225,12 @@ async function handleAnalytics(env: Env): Promise<Response> {
          SUM(CASE WHEN race_started_at IS NOT NULL THEN 1 ELSE 0 END) AS races_started,
          SUM(CASE WHEN completed_successfully = 1 THEN 1 ELSE 0 END) AS races_completed,
          SUM(CASE WHEN race_end_reason = 'disconnect' THEN 1 ELSE 0 END) AS races_disconnected,
-         SUM(pre_start_drop_count) AS pre_start_drops
+         SUM(pre_start_drop_count) AS pre_start_drops,
+         SUM(spectator_join_count) AS spectator_join_count,
+         SUM(spectator_leave_count) AS spectator_leave_count,
+         MAX(spectator_max_concurrent) AS spectator_max_concurrent,
+         SUM(CASE WHEN spectator_join_count > 0 THEN 1 ELSE 0 END) AS rooms_watched,
+         SUM(spectator_watch_ms_total) AS spectator_watch_ms_total
        FROM room_analytics
        WHERE source = 'user'`
     ).first<AnalyticsSummaryRow>();
@@ -227,7 +242,12 @@ async function handleAnalytics(env: Env): Promise<Response> {
          SUM(CASE WHEN guest_joined_at IS NOT NULL THEN 1 ELSE 0 END) AS rooms_joined,
          SUM(CASE WHEN race_started_at IS NOT NULL THEN 1 ELSE 0 END) AS races_started,
          SUM(CASE WHEN completed_successfully = 1 THEN 1 ELSE 0 END) AS races_completed,
-         SUM(pre_start_drop_count) AS pre_start_drops
+         SUM(pre_start_drop_count) AS pre_start_drops,
+         SUM(spectator_join_count) AS spectator_join_count,
+         SUM(spectator_leave_count) AS spectator_leave_count,
+         MAX(spectator_max_concurrent) AS spectator_max_concurrent,
+         SUM(CASE WHEN spectator_join_count > 0 THEN 1 ELSE 0 END) AS rooms_watched,
+         SUM(spectator_watch_ms_total) AS spectator_watch_ms_total
        FROM room_analytics
        WHERE source = 'user' AND created_at >= ?
        GROUP BY date(created_at / 1000, 'unixepoch')
@@ -245,6 +265,11 @@ async function handleAnalytics(env: Env): Promise<Response> {
         racesCompleted: summary?.races_completed ?? 0,
         racesDisconnected: summary?.races_disconnected ?? 0,
         preStartDrops: summary?.pre_start_drops ?? 0,
+        spectatorJoins: summary?.spectator_join_count ?? 0,
+        spectatorLeaves: summary?.spectator_leave_count ?? 0,
+        spectatorMaxConcurrent: summary?.spectator_max_concurrent ?? 0,
+        roomsWatched: summary?.rooms_watched ?? 0,
+        spectatorWatchMsTotal: summary?.spectator_watch_ms_total ?? 0,
       },
       daily: (daily.results ?? []).map((row) => ({
         day: row.day,
@@ -253,6 +278,11 @@ async function handleAnalytics(env: Env): Promise<Response> {
         racesStarted: row.races_started ?? 0,
         racesCompleted: row.races_completed ?? 0,
         preStartDrops: row.pre_start_drops ?? 0,
+        spectatorJoins: row.spectator_join_count ?? 0,
+        spectatorLeaves: row.spectator_leave_count ?? 0,
+        spectatorMaxConcurrent: row.spectator_max_concurrent ?? 0,
+        roomsWatched: row.rooms_watched ?? 0,
+        spectatorWatchMsTotal: row.spectator_watch_ms_total ?? 0,
       })),
     });
   } catch (err) {

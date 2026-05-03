@@ -6,6 +6,7 @@ import {
 } from "../lib/api";
 import type {
   ClientMsg,
+  ParticipantKind,
   PlayerRole,
   PublicRoomState,
   ReactionKey,
@@ -25,6 +26,9 @@ export interface OpponentProgress {
   accuracy: number;
 }
 
+export type SpectatorProgress = Partial<Record<PlayerRole, OpponentProgress>>;
+export type SpectatorFinish = Partial<Record<PlayerRole, OpponentFinish>>;
+
 export interface OpponentFinish {
   wpm: number;
   accuracy: number;
@@ -43,10 +47,13 @@ export interface UseRoomResult {
   roomState: PublicRoomState | null;
   connectionState: ConnectionState;
   error: string | null;
+  mode: ParticipantKind | null;
   role: PlayerRole | null;
   opponentProgress: OpponentProgress | null;
   opponentFinish: OpponentFinish | null;
   opponentReaction: OpponentReaction | null;
+  spectatorProgress: SpectatorProgress;
+  spectatorFinish: SpectatorFinish;
   send: (msg: ClientMsg) => void;
 }
 
@@ -60,6 +67,7 @@ export function useRoom(roomId: string): UseRoomResult {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ParticipantKind | null>(null);
   const [role, setRole] = useState<PlayerRole | null>(null);
   const [opponentProgress, setOpponentProgress] =
     useState<OpponentProgress | null>(null);
@@ -67,6 +75,10 @@ export function useRoom(roomId: string): UseRoomResult {
     useState<OpponentFinish | null>(null);
   const [opponentReaction, setOpponentReaction] =
     useState<OpponentReaction | null>(null);
+  const [spectatorProgress, setSpectatorProgress] =
+    useState<SpectatorProgress>({});
+  const [spectatorFinish, setSpectatorFinish] =
+    useState<SpectatorFinish>({});
 
   const wsRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
@@ -100,8 +112,13 @@ export function useRoom(roomId: string): UseRoomResult {
 
         switch (msg.t) {
           case "welcome":
+            setMode("player");
             setRole(msg.role);
             setSessionToken(roomId, msg.sessionToken);
+            return;
+          case "spectator_welcome":
+            setMode("spectator");
+            setRole(null);
             return;
           case "state":
             setRoomState(msg.room);
@@ -111,6 +128,8 @@ export function useRoom(roomId: string): UseRoomResult {
             ) {
               setOpponentProgress(null);
               setOpponentFinish(null);
+              setSpectatorProgress({});
+              setSpectatorFinish({});
             }
             return;
           case "error":
@@ -130,6 +149,27 @@ export function useRoom(roomId: string): UseRoomResult {
               accuracy: msg.accuracy,
               elapsedMs: msg.elapsedMs,
             });
+            return;
+          case "player_progress":
+            setSpectatorProgress((current) => ({
+              ...current,
+              [msg.role]: {
+                pos: msg.pos,
+                correctCount: msg.correctCount,
+                wpm: msg.wpm,
+                accuracy: msg.accuracy,
+              },
+            }));
+            return;
+          case "player_finished":
+            setSpectatorFinish((current) => ({
+              ...current,
+              [msg.role]: {
+                wpm: msg.wpm,
+                accuracy: msg.accuracy,
+                elapsedMs: msg.elapsedMs,
+              },
+            }));
             return;
           case "opponent_reaction":
             setOpponentReaction({
@@ -154,7 +194,15 @@ export function useRoom(roomId: string): UseRoomResult {
           setConnectionState("closed");
           return;
         }
-        if (ev.code === 4009 || ev.reason?.includes("full")) {
+        if (
+          ev.code === 4010 ||
+          ev.reason?.includes("spectator_full")
+        ) {
+          setError("spectator_full");
+          setConnectionState("closed");
+          return;
+        }
+        if (ev.code === 4009 || ev.reason?.includes("room_full")) {
           setError("room_full");
           setConnectionState("closed");
           return;
@@ -208,10 +256,13 @@ export function useRoom(roomId: string): UseRoomResult {
     roomState,
     connectionState,
     error,
+    mode,
     role,
     opponentProgress,
     opponentFinish,
     opponentReaction,
+    spectatorProgress,
+    spectatorFinish,
     send,
   };
 }

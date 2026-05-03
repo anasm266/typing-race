@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { useRoom } from "../hooks/useRoom";
 import { RaceView } from "../components/RaceView";
 import { ReadyCheck } from "../components/ReadyCheck";
+import { SpectatorView } from "../components/SpectatorView";
 
 export function Room() {
   const params = useParams<{ id: string }>();
@@ -16,10 +17,13 @@ function RoomSession({ roomId }: { roomId: string }) {
     roomState,
     connectionState,
     error,
+    mode,
     role,
     opponentProgress,
     opponentFinish,
     opponentReaction,
+    spectatorProgress,
+    spectatorFinish,
     send,
   } = useRoom(roomId);
 
@@ -38,6 +42,16 @@ function RoomSession({ roomId }: { roomId: string }) {
       <StatusScreen
         title="race already in progress"
         subtitle="this room has two players already"
+        cta={{ label: "create your own", onClick: () => setLocation("/") }}
+      />
+    );
+  }
+
+  if (error === "spectator_full") {
+    return (
+      <StatusScreen
+        title="this race is packed"
+        subtitle="too many people are watching right now"
         cta={{ label: "create your own", onClick: () => setLocation("/") }}
       />
     );
@@ -75,7 +89,16 @@ function RoomSession({ roomId }: { roomId: string }) {
         reconnecting={reconnecting}
         disconnectedRival={disconnectedRival}
       />
-      {roomState.status === "waiting" ? (
+      {(roomState.playerCount >= 2 || mode === "spectator") && (
+        <WatchLinkButton roomId={roomId} />
+      )}
+      {mode === "spectator" ? (
+        <SpectatorView
+          room={roomState}
+          progress={spectatorProgress}
+          finish={spectatorFinish}
+        />
+      ) : roomState.status === "waiting" ? (
         <WaitingLobby roomId={roomId} />
       ) : roomState.status === "ready_check" ? (
         <ReadyCheck room={roomState} role={role} send={send} />
@@ -92,6 +115,33 @@ function RoomSession({ roomId }: { roomId: string }) {
         />
       )}
     </div>
+  );
+}
+
+function WatchLinkButton({ roomId }: { roomId: string }) {
+  const [copied, setCopied] = useState(false);
+  const shareUrl =
+    typeof window === "undefined"
+      ? ""
+      : `${window.location.origin}/room/${roomId}`;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={copy}
+      className="px-3 py-1.5 border border-border text-[0.7rem] uppercase tracking-[0.15em] text-fg-dim hover:border-accent hover:text-accent transition-colors"
+    >
+      {copied ? "watch link copied" : "copy watch link"}
+    </button>
   );
 }
 

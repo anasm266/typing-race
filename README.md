@@ -18,6 +18,7 @@ Open a room, send it to a friend, and race immediately. No accounts, no lobby br
 - Creates a shareable room URL instantly
 - Drops the second player straight into the race flow
 - Runs synchronized countdowns and live cursor/WPM updates over WebSockets
+- Lets extra room-link visitors spectate live without taking a racer slot
 - Supports both finish-passage mode and time-limit mode
 - Shows post-race results with a WPM-over-time graph
 - Allows rematches without re-sharing the room
@@ -138,6 +139,7 @@ cd worker
 wrangler d1 execute typing-race-db --file=migrations/0001_races.sql --remote
 wrangler d1 execute typing-race-db --file=migrations/0002_room_analytics.sql --remote
 wrangler d1 execute typing-race-db --file=migrations/0003_room_analytics_source.sql --remote
+wrangler d1 execute typing-race-db --file=migrations/0004_spectator_analytics.sql --remote
 ```
 
 ## Load testing
@@ -183,6 +185,13 @@ That command validates the repo with:
 npm run lint:web
 npm run build:web
 npm run typecheck:worker
+```
+
+Spectator WebSocket behavior can be smoke-tested against a running local Worker:
+
+```bash
+npm run dev:worker
+npm run smoke:spectators
 ```
 ## Observability
 
