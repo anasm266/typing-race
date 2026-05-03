@@ -169,6 +169,29 @@ body {
   animation: caretBlink 1s steps(2, start) infinite;
 }
 
+.passage-char[data-player-one="true"]::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 8%;
+  bottom: 8%;
+  width: 2px;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px var(--color-accent);
+}
+
+.passage-char[data-player-two="true"]::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: 8%;
+  bottom: 8%;
+  width: 2px;
+  background: var(--color-opponent);
+  box-shadow: 0 0 8px var(--color-opponent);
+  opacity: 0.85;
+}
+
 .passage-char[data-opponent="true"]::after {
   content: "";
   position: absolute;

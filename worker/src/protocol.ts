@@ -9,6 +9,7 @@ export type TimeLimit = 30 | 60 | 90;
 export type RoomSource = "user" | "load_test";
 
 export type PlayerRole = "host" | "guest";
+export type ParticipantKind = "player" | "spectator";
 
 export interface RoomConfig {
   endMode: EndMode;
@@ -79,6 +80,7 @@ export interface PublicRoomState {
   config: RoomConfig;
   status: RoomStatus;
   playerCount: number;
+  spectatorCount: number;
   createdAt: number;
   /**
    * While status === "ready_check", the ms timestamp at which the race
@@ -138,9 +140,25 @@ export type ClientMsg =
 /** Server → Client messages */
 export type ServerMsg =
   | { t: "welcome"; role: PlayerRole; sessionToken: string }
+  | { t: "spectator_welcome" }
   | { t: "state"; room: PublicRoomState }
   | { t: "peer_joined"; playerCount: number }
   | { t: "peer_left"; playerCount: number }
+  | {
+      t: "player_progress";
+      role: PlayerRole;
+      pos: number;
+      correctCount: number;
+      wpm: number;
+      accuracy: number;
+    }
+  | {
+      t: "player_finished";
+      role: PlayerRole;
+      wpm: number;
+      accuracy: number;
+      elapsedMs: number;
+    }
   | {
       t: "opponent_progress";
       pos: number;

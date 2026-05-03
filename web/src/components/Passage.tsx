@@ -5,6 +5,9 @@ interface PassageProps {
   typed: string;
   /** Opponent's current typed position. -1 / undefined = don't render. */
   opponentPos?: number;
+  playerOnePos?: number;
+  playerTwoPos?: number;
+  showCursor?: boolean;
 }
 
 interface Token {
@@ -30,7 +33,14 @@ function tokenize(text: string): Token[] {
   return tokens;
 }
 
-export function Passage({ passage, typed, opponentPos }: PassageProps) {
+export function Passage({
+  passage,
+  typed,
+  opponentPos,
+  playerOnePos,
+  playerTwoPos,
+  showCursor = true,
+}: PassageProps) {
   const tokens = useMemo(() => tokenize(passage), [passage]);
 
   return (
@@ -49,6 +59,9 @@ export function Passage({ passage, typed, opponentPos }: PassageProps) {
                 globalIdx={globalIdx}
                 typed={typed}
                 opponentPos={opponentPos}
+                playerOnePos={playerOnePos}
+                playerTwoPos={playerTwoPos}
+                showCursor={showCursor}
               />
             );
           });
@@ -67,6 +80,9 @@ export function Passage({ passage, typed, opponentPos }: PassageProps) {
                   globalIdx={globalIdx}
                   typed={typed}
                   opponentPos={opponentPos}
+                  playerOnePos={playerOnePos}
+                  playerTwoPos={playerTwoPos}
+                  showCursor={showCursor}
                 />
               );
             })}
@@ -82,14 +98,29 @@ interface CharProps {
   globalIdx: number;
   typed: string;
   opponentPos?: number;
+  playerOnePos?: number;
+  playerTwoPos?: number;
+  showCursor: boolean;
 }
 
-function Char({ ch, globalIdx, typed, opponentPos }: CharProps) {
+function Char({
+  ch,
+  globalIdx,
+  typed,
+  opponentPos,
+  playerOnePos,
+  playerTwoPos,
+  showCursor,
+}: CharProps) {
   const isTyped = globalIdx < typed.length;
   const isCorrect = isTyped && typed[globalIdx] === ch;
   const isWrong = isTyped && !isCorrect;
-  const isCursor = globalIdx === typed.length;
+  const isCursor = showCursor && globalIdx === typed.length;
   const isOpponent = opponentPos !== undefined && globalIdx === opponentPos;
+  const isPlayerOne =
+    playerOnePos !== undefined && globalIdx === playerOnePos;
+  const isPlayerTwo =
+    playerTwoPos !== undefined && globalIdx === playerTwoPos;
 
   return (
     <span
@@ -101,6 +132,8 @@ function Char({ ch, globalIdx, typed, opponentPos }: CharProps) {
       data-cursor={isCursor ? "true" : undefined}
       data-wrong={isWrong ? "true" : undefined}
       data-opponent={isOpponent ? "true" : undefined}
+      data-player-one={isPlayerOne ? "true" : undefined}
+      data-player-two={isPlayerTwo ? "true" : undefined}
     >
       {ch}
     </span>
