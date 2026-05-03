@@ -34,12 +34,17 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 } as const;
 
-function json(data: unknown, status = 200): Response {
+function json(
+  data: unknown,
+  status = 200,
+  headers: HeadersInit = {}
+): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json",
       ...CORS_HEADERS,
+      ...headers,
     },
   });
 }
@@ -271,7 +276,11 @@ async function handleRecent(env: Env): Promise<Response> {
         LIMIT 20`
     ).all<RecentRaceRow>();
 
-    return json({ races: rs.results ?? [] });
+    return json(
+      { races: rs.results ?? [] },
+      200,
+      { "Cache-Control": "no-store" }
+    );
   } catch (err) {
     Sentry.captureException(err);
     return json({ error: "db_error" }, 500);

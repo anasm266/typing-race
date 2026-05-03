@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "wouter";
 import { WORKER_URL } from "../lib/api";
 
@@ -27,21 +27,38 @@ type Status =
 export function Recent() {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
 
-  useEffect(() => {
-    const ctrl = new AbortController();
-    fetch(`${WORKER_URL}/recent`, { signal: ctrl.signal })
+  const loadRecent = useCallback((signal?: AbortSignal) => {
+    fetch(`${WORKER_URL}/recent`, { cache: "no-store", signal })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = (await r.json()) as { races: RecentRace[] };
         setStatus({ kind: "ok", races: data.races ?? [] });
       })
       .catch((err: Error) => {
-        if (!ctrl.signal.aborted) {
+        if (!signal?.aborted) {
           setStatus({ kind: "error", message: err.message });
         }
       });
-    return () => ctrl.abort();
   }, []);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    loadRecent(ctrl.signal);
+    const interval = window.setInterval(() => loadRecent(), 15_000);
+
+    function refreshIfVisible() {
+      if (document.visibilityState === "visible") loadRecent();
+    }
+
+    window.addEventListener("focus", refreshIfVisible);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      ctrl.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshIfVisible);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [loadRecent]);
 
   return (
     <div className="flex flex-col items-center gap-8 w-full max-w-[800px]">
