@@ -136,12 +136,17 @@ function WatchLinkButton({ roomId }: { roomId: string }) {
   }
 
   return (
-    <button
-      onClick={copy}
-      className="px-3 py-1.5 border border-border text-[0.7rem] uppercase tracking-[0.15em] text-fg-dim hover:border-accent hover:text-accent transition-colors"
-    >
-      {copied ? "watch link copied" : "copy watch link"}
-    </button>
+    <div className="flex flex-col items-center gap-1 text-center">
+      <button
+        onClick={copy}
+        className="px-3 py-1.5 border border-border text-[0.7rem] uppercase tracking-[0.15em] text-fg-dim hover:border-accent hover:text-accent transition-colors"
+      >
+        {copied ? "watch link copied" : "copy spectator link"}
+      </button>
+      <span className="text-[0.68rem] text-fg-dimmer">
+        same room link. extra visitors watch live without joining the race.
+      </span>
+    </div>
   );
 }
 
@@ -272,8 +277,8 @@ function WaitingLobby({ roomId }: { roomId: string }) {
           </button>
         </div>
         <span className="text-xs text-fg-dimmer">
-          send it to someone. when they open it, they'll join your room and
-          both of you can race together.
+          first friend to open it races you. after two racers are in, the
+          same link becomes a live spectator view for everyone else.
         </span>
       </div>
 
