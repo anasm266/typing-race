@@ -202,7 +202,10 @@ function PillGroup<T extends string | number>({
         return (
           <span key={String(opt.value)} className="relative group">
             <button
-              onClick={() => onChange(opt.value)}
+              onClick={(event) => {
+                onChange(opt.value);
+                event.currentTarget.blur();
+              }}
               aria-describedby={
                 opt.description ? `hint-${String(opt.value)}` : undefined
               }
@@ -219,7 +222,7 @@ function PillGroup<T extends string | number>({
               <span
                 id={`hint-${String(opt.value)}`}
                 role="tooltip"
-                className="pointer-events-none absolute left-0 top-[calc(100%+0.5rem)] z-10 w-[min(21rem,calc(100vw-2rem))] border border-border bg-bg-soft px-3 py-2 text-left text-xs leading-relaxed text-fg-dim opacity-0 shadow-[0_12px_32px_rgba(0,0,0,0.35)] transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+                className="pointer-events-none absolute left-0 top-[calc(100%+0.5rem)] z-10 w-[min(21rem,calc(100vw-2rem))] border border-border bg-bg-soft px-3 py-2 text-left text-xs leading-relaxed text-fg-dim opacity-0 shadow-[0_12px_32px_rgba(0,0,0,0.35)] transition-opacity duration-150 group-hover:opacity-100"
               >
                 {opt.description}
               </span>
