@@ -58,9 +58,23 @@ export function Home() {
             value={config.endMode}
             options={
               [
-                { value: "finish", label: "finish passage" },
-                { value: "time", label: "time limit" },
-              ] satisfies Array<{ value: EndMode; label: string }>
+                {
+                  value: "finish",
+                  label: "finish passage",
+                  description:
+                    "First to finish wins. After one racer finishes, the other gets 10 seconds to close the gap before the result locks.",
+                },
+                {
+                  value: "time",
+                  label: "time limit",
+                  description:
+                    "Race against the clock. When time runs out, the result is scored wherever both racers ended up, finished or not.",
+                },
+              ] satisfies Array<{
+                value: EndMode;
+                label: string;
+                description: string;
+              }>
             }
             onChange={(v) => setConfig((c) => ({ ...c, endMode: v }))}
           />
@@ -142,7 +156,7 @@ function Field({
 
 interface PillGroupProps<T extends string | number> {
   value: T;
-  options: Array<{ value: T; label: string }>;
+  options: Array<{ value: T; label: string; description?: string }>;
   onChange: (v: T) => void;
 }
 
@@ -156,18 +170,31 @@ function PillGroup<T extends string | number>({
       {options.map((opt) => {
         const selected = opt.value === value;
         return (
-          <button
-            key={String(opt.value)}
-            onClick={() => onChange(opt.value)}
-            className={
-              "px-4 py-2 text-sm transition-colors border " +
-              (selected
-                ? "border-accent text-accent bg-accent/5"
-                : "border-border text-fg-dim hover:border-fg-dim hover:text-fg")
-            }
-          >
-            {opt.label}
-          </button>
+          <span key={String(opt.value)} className="relative group">
+            <button
+              onClick={() => onChange(opt.value)}
+              aria-describedby={
+                opt.description ? `hint-${String(opt.value)}` : undefined
+              }
+              className={
+                "px-4 py-2 text-sm transition-colors border " +
+                (selected
+                  ? "border-accent text-accent bg-accent/5"
+                  : "border-border text-fg-dim hover:border-fg-dim hover:text-fg")
+              }
+            >
+              {opt.label}
+            </button>
+            {opt.description && (
+              <span
+                id={`hint-${String(opt.value)}`}
+                role="tooltip"
+                className="pointer-events-none absolute left-0 top-[calc(100%+0.5rem)] z-10 w-[min(21rem,calc(100vw-2rem))] border border-border bg-bg-soft px-3 py-2 text-left text-xs leading-relaxed text-fg-dim opacity-0 shadow-[0_12px_32px_rgba(0,0,0,0.35)] transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+              >
+                {opt.description}
+              </span>
+            )}
+          </span>
         );
       })}
     </div>
