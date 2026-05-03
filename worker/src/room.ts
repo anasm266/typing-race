@@ -963,7 +963,7 @@ export class Room extends DurableObject<Env> {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
-        stateAtEnd.roomId,
+        `${stateAtEnd.roomId}:${endedAt}`,
         endedAt,
         result.endReason,
         result.outcome,
