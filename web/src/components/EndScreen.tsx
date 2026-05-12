@@ -94,6 +94,7 @@ export function EndScreen({
     (s) => s.t <= raceDurationSec
   );
   const showFinishScore = result.endReason === "finish";
+  const isWordSprint = room.passage.wordCount === 1;
 
   return (
     <div className="flex flex-col items-center gap-10 w-full max-w-[760px]">
@@ -117,11 +118,20 @@ export function EndScreen({
         />
       </div>
 
-      <WpmGraph
-        mySamples={clippedMine}
-        opponentSamples={clippedTheirs}
-        raceDurationSec={raceDurationSec}
-      />
+      {isWordSprint ? (
+        <WordSprintSummary
+          outcome={outcome}
+          me={me}
+          them={them}
+          wordLength={room.passage.text.length}
+        />
+      ) : (
+        <WpmGraph
+          mySamples={clippedMine}
+          opponentSamples={clippedTheirs}
+          raceDurationSec={raceDurationSec}
+        />
+      )}
 
       <div className="flex flex-col items-center gap-3">
         <RematchControls
@@ -135,6 +145,215 @@ export function EndScreen({
       </div>
     </div>
   );
+}
+
+/* -------------------- one-word sprint summary -------------------- */
+
+function WordSprintSummary({
+  outcome,
+  me,
+  them,
+  wordLength,
+}: {
+  outcome: Outcome;
+  me: PlayerResult;
+  them: PlayerResult;
+  wordLength: number;
+}) {
+  const explanation = sprintExplanation(outcome, me, them);
+  const meWon = outcome === "win";
+  const themWon = outcome === "lose";
+  const fastestElapsed = Math.max(1, Math.min(me.elapsedMs, them.elapsedMs));
+  const meBar = Math.max(
+    8,
+    Math.round((fastestElapsed / Math.max(me.elapsedMs, 1)) * 100)
+  );
+  const themBar = Math.max(
+    8,
+    Math.round((fastestElapsed / Math.max(them.elapsedMs, 1)) * 100)
+  );
+
+  return (
+    <section className="word-sprint-card relative w-full overflow-hidden border border-border bg-bg-soft/70 px-5 py-5 shadow-[0_24px_80px_rgba(0,0,0,0.32)]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_25%_0%,rgba(34,211,238,0.14),transparent_34%),radial-gradient(circle_at_75%_15%,rgba(244,114,182,0.12),transparent_34%)]" />
+      <div className="relative flex flex-col gap-5">
+        <div className="flex flex-col items-center gap-1 text-center">
+          <span className="text-[0.65rem] uppercase tracking-[0.25em] text-fg-dim">
+            one word sprint
+          </span>
+          <strong
+            className={
+              "text-lg font-medium " +
+              (outcome === "win"
+                ? "text-accent"
+                : outcome === "lose"
+                ? "text-opponent"
+                : "text-fg")
+            }
+          >
+            {explanation.headline}
+          </strong>
+          <span className="text-xs text-fg-dimmer">
+            {explanation.detail}
+          </span>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <SprintPlayerCard
+            label="you"
+            color="accent"
+            result={me}
+            wordLength={wordLength}
+            winner={meWon}
+            barWidth={meBar}
+          />
+          <SprintPlayerCard
+            label="rival"
+            color="opponent"
+            result={them}
+            wordLength={wordLength}
+            winner={themWon}
+            barWidth={themBar}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SprintPlayerCard({
+  label,
+  color,
+  result,
+  wordLength,
+  winner,
+  barWidth,
+}: {
+  label: string;
+  color: "accent" | "opponent";
+  result: PlayerResult;
+  wordLength: number;
+  winner: boolean;
+  barWidth: number;
+}) {
+  const textColor = color === "accent" ? "text-accent" : "text-opponent";
+  const bgColor = color === "accent" ? "bg-accent" : "bg-opponent";
+  const borderColor =
+    color === "accent" ? "border-accent/45" : "border-opponent/45";
+  const glow =
+    color === "accent"
+      ? "shadow-[0_0_36px_rgba(34,211,238,0.10)]"
+      : "shadow-[0_0_36px_rgba(244,114,182,0.10)]";
+
+  return (
+    <div
+      className={
+        "word-sprint-player border bg-bg/70 p-4 transition-transform duration-200 hover:-translate-y-0.5 " +
+        (winner ? `${borderColor} ${glow}` : "border-border")
+      }
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="flex items-center gap-2 text-[0.7rem] uppercase tracking-[0.2em] text-fg-dim">
+          <span className={`inline-block size-1.5 rounded-full ${bgColor}`} />
+          {label}
+        </span>
+        {winner && (
+          <span
+            className={`word-sprint-winner px-2 py-1 text-[0.6rem] uppercase tracking-[0.18em] ${textColor} border ${borderColor}`}
+          >
+            winner
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <div className={`text-4xl tabular-nums ${textColor}`}>
+            {formatSprintTime(result.elapsedMs)}
+          </div>
+          <div className="mt-1 text-[0.65rem] uppercase tracking-[0.15em] text-fg-dimmer">
+            finish time
+          </div>
+        </div>
+        <div className="text-right text-xs text-fg-dim">
+          <div>
+            <span className="tabular-nums text-fg">{result.accuracy}%</span>{" "}
+            accuracy
+          </div>
+          <div>
+            <span className="tabular-nums text-fg">
+              {result.correctCount}/{wordLength}
+            </span>{" "}
+            chars
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 h-1.5 overflow-hidden bg-bg-soft-2">
+        <div
+          className={`h-full ${bgColor} word-sprint-bar`}
+          style={{ width: `${barWidth}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function sprintExplanation(
+  outcome: Outcome,
+  me: PlayerResult,
+  them: PlayerResult
+): { headline: string; detail: string } {
+  if (outcome === "tie") {
+    return {
+      headline: "dead heat",
+      detail: "both racers were effectively even on this word",
+    };
+  }
+
+  const winner = outcome === "win" ? me : them;
+  const loser = outcome === "win" ? them : me;
+  const winnerLabel = outcome === "win" ? "you" : "rival";
+
+  if (winner.finishedPassage && !loser.finishedPassage) {
+    return {
+      headline: `${winnerLabel} finished the word`,
+      detail: "clean completion decided the sprint",
+    };
+  }
+
+  if (winner.correctCount !== loser.correctCount) {
+    return {
+      headline: `${winnerLabel} typed more clean chars`,
+      detail: `${winner.correctCount} of ${Math.max(
+        winner.correctCount,
+        loser.correctCount
+      )} chars counted before the result locked`,
+    };
+  }
+
+  if (winner.accuracy !== loser.accuracy) {
+    return {
+      headline: `${winnerLabel} won on accuracy`,
+      detail: `${winner.accuracy}% vs ${loser.accuracy}%`,
+    };
+  }
+
+  const margin = Math.abs(winner.elapsedMs - loser.elapsedMs);
+  return {
+    headline: `${winnerLabel} won by ${formatSprintMargin(margin)}`,
+    detail: "reaction time and clean execution decided it",
+  };
+}
+
+function formatSprintTime(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function formatSprintMargin(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
 }
 
 /* -------------------- rematch controls -------------------- */
