@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { calcAccuracy, calcWpm, formatElapsed } from "../lib/wpm";
+import { calcAccuracy, calcWpm, formatPreciseElapsed } from "../lib/wpm";
 
 interface ResultScreenProps {
   elapsedMs: number;
@@ -46,7 +46,7 @@ export function ResultScreen({
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 text-center">
         <ResultStat label="accuracy" value={`${acc}%`} />
-        <ResultStat label="time" value={formatElapsed(elapsedMs)} />
+        <ResultStat label="time" value={formatPreciseElapsed(elapsedMs)} />
         <ResultStat label="keystrokes" value={totalKeystrokes.toString()} />
         <ResultStat label="words" value={passageWords.toString()} />
       </div>

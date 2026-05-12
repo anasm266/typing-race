@@ -37,6 +37,18 @@ export function formatElapsed(ms: number): string {
   return `${mm}:${ss}`;
 }
 
+export function formatPreciseElapsed(ms: number): string {
+  if (ms < 1000) {
+    return `${Math.max(1, Math.round(ms))}ms`;
+  }
+
+  if (ms < 60_000) {
+    return `${(ms / 1000).toFixed(2)}s`;
+  }
+
+  return formatElapsed(ms);
+}
+
 export interface WpmSample {
   /** seconds since race started */
   t: number;
