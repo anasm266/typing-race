@@ -9,17 +9,7 @@ interface ReadyCheckProps {
 }
 
 export function ReadyCheck({ room, role, send }: ReadyCheckProps) {
-  const [now, setNow] = useState(() => Date.now());
   const [sent, setSent] = useState(false);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(id);
-  }, []);
-
-  const remainingSec = room.readyCheckUntil
-    ? Math.max(0, Math.ceil((room.readyCheckUntil - now) / 1000))
-    : 0;
 
   const lockIn = () => {
     if (sent) return;
@@ -64,9 +54,7 @@ export function ReadyCheck({ room, role, send }: ReadyCheckProps) {
               <span className="text-accent">lock in</span>
             </>
           ) : (
-            <>
-              <span>ready when you are</span>
-            </>
+            <span>ready when you are</span>
           )}
         </h2>
       </div>
@@ -82,10 +70,7 @@ export function ReadyCheck({ room, role, send }: ReadyCheckProps) {
             <span>rival hasn't locked in yet</span>
           </div>
           <span className="text-xs text-fg-dimmer">
-            race auto-starts in{" "}
-            <span className="text-fg-dim tabular-nums">
-              {remainingSec}s
-            </span>
+            race starts when they lock in · safety auto-start is on
           </span>
         </div>
       ) : (
@@ -104,10 +89,8 @@ export function ReadyCheck({ room, role, send }: ReadyCheckProps) {
           </button>
           <span className="text-xs text-fg-dimmer">
             press <span className="text-fg-dim">enter</span> or{" "}
-            <span className="text-fg-dim">space</span> · auto-start in{" "}
-            <span className="text-fg-dim tabular-nums">
-              {remainingSec}s
-            </span>
+            <span className="text-fg-dim">space</span> · then the countdown
+            starts
           </span>
         </div>
       )}
