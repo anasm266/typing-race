@@ -98,7 +98,10 @@ export function EndScreen({
 
   return (
     <div className="flex flex-col items-center gap-10 w-full max-w-[760px]">
-      <Banner outcome={outcome} reason={reasonLabel(result)} />
+      <Banner
+        outcome={outcome}
+        reason={reasonLabel(result, isWordSprint)}
+      />
 
       <div className="grid grid-cols-[1fr_auto_1fr] gap-10 items-center w-full">
         <ResultColumn
@@ -106,6 +109,7 @@ export function EndScreen({
           color="accent"
           result={me}
           showFinishScore={showFinishScore}
+          isWordSprint={isWordSprint}
           align="right"
         />
         <div className="h-24 w-px bg-border" aria-hidden />
@@ -114,6 +118,7 @@ export function EndScreen({
           color="opponent"
           result={them}
           showFinishScore={showFinishScore}
+          isWordSprint={isWordSprint}
           align="left"
         />
       </div>
@@ -473,7 +478,10 @@ function interpretOutcome(
   return role === "guest" ? "win" : "lose";
 }
 
-function reasonLabel(result: RaceResult): string {
+function reasonLabel(result: RaceResult, isWordSprint: boolean): string {
+  if (isWordSprint) {
+    return "one word sprint · fastest clean finish wins";
+  }
   if (result.endReason === "finish") {
     return "finish mode · final score balances speed and accuracy";
   }
@@ -519,6 +527,7 @@ interface ResultColumnProps {
   color: "accent" | "opponent";
   result: PlayerResult;
   showFinishScore: boolean;
+  isWordSprint: boolean;
   align: "left" | "right";
 }
 
@@ -527,6 +536,7 @@ function ResultColumn({
   color,
   result,
   showFinishScore,
+  isWordSprint,
   align,
 }: ResultColumnProps) {
   const textColor = color === "accent" ? "text-accent" : "text-opponent";
@@ -547,22 +557,24 @@ function ResultColumn({
 
       <div className="flex items-baseline gap-2">
         <span className={`text-5xl tabular-nums font-medium ${textColor}`}>
-          {result.wpm}
+          {isWordSprint ? formatSprintTime(result.elapsedMs) : result.wpm}
         </span>
         <span className="text-xs uppercase tracking-[0.15em] text-fg-dim">
-          wpm
+          {isWordSprint ? "time" : "wpm"}
         </span>
       </div>
 
       <div className="flex flex-col gap-1 text-sm">
-        {showFinishScore && (
+        {showFinishScore && !isWordSprint && (
           <Stat
             label="score"
             value={formatScore(finishModeScore(result))}
           />
         )}
         <Stat label="accuracy" value={`${result.accuracy}%`} />
-        <Stat label="time" value={formatElapsed(result.elapsedMs)} />
+        {!isWordSprint && (
+          <Stat label="time" value={formatElapsed(result.elapsedMs)} />
+        )}
         <Stat
           label="chars"
           value={`${result.correctCount}`}

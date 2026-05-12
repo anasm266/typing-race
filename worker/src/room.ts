@@ -449,12 +449,23 @@ export class Room extends DurableObject<Env> {
         if (this.state?.status !== "racing") return;
         const att = normalizeAttachment(ws);
         if (att?.kind !== "player") return;
+        const at = Date.now();
+        const passageLen = this.state.passage.text.length;
+        const pos = Math.max(0, Math.min(passageLen, msg.pos));
+        const correctCount = Math.max(
+          0,
+          Math.min(passageLen, msg.correctCount)
+        );
+        const wpm = calcOfficialWpm(
+          correctCount,
+          elapsedSinceStart(this.state, at)
+        );
         const progress: PlayerProgress = {
-          pos: msg.pos,
-          correctCount: msg.correctCount,
-          wpm: msg.wpm,
+          pos,
+          correctCount,
+          wpm,
           accuracy: msg.accuracy,
-          at: Date.now(),
+          at,
         };
         if (att.role === "host") {
           this.state = { ...this.state, _hostProgress: progress };
@@ -464,17 +475,17 @@ export class Room extends DurableObject<Env> {
         await this.maybePersistProgress(progress.at);
         this.broadcastToPlayersExcept(ws, {
           t: "opponent_progress",
-          pos: msg.pos,
-          correctCount: msg.correctCount,
-          wpm: msg.wpm,
+          pos,
+          correctCount,
+          wpm,
           accuracy: msg.accuracy,
         });
         this.broadcastToSpectators({
           t: "player_progress",
           role: att.role,
-          pos: msg.pos,
-          correctCount: msg.correctCount,
-          wpm: msg.wpm,
+          pos,
+          correctCount,
+          wpm,
           accuracy: msg.accuracy,
         });
         return;
@@ -492,40 +503,43 @@ export class Room extends DurableObject<Env> {
           0,
           Math.min(passageLen, msg.correctCount)
         );
+        const finishedAt = Date.now();
+        const elapsedMs = elapsedSinceStart(this.state, finishedAt);
+        const wpm = calcOfficialWpm(correctCount, elapsedMs);
         const finalProgress: PlayerProgress = {
           pos: passageLen,
           correctCount,
-          wpm: msg.wpm,
+          wpm,
           accuracy: msg.accuracy,
-          at: Date.now(),
+          at: finishedAt,
         };
         if (att.role === "host") {
           this.state = {
             ...this.state,
             _hostProgress: finalProgress,
-            _hostFinishedAt: Date.now(),
+            _hostFinishedAt: finishedAt,
           };
         } else {
           this.state = {
             ...this.state,
             _guestProgress: finalProgress,
-            _guestFinishedAt: Date.now(),
+            _guestFinishedAt: finishedAt,
           };
         }
         await this.persistState();
 
         this.broadcastToPlayersExcept(ws, {
           t: "opponent_finished",
-          wpm: msg.wpm,
+          wpm,
           accuracy: msg.accuracy,
-          elapsedMs: msg.elapsedMs,
+          elapsedMs,
         });
         this.broadcastToSpectators({
           t: "player_finished",
           role: att.role,
-          wpm: msg.wpm,
+          wpm,
           accuracy: msg.accuracy,
-          elapsedMs: msg.elapsedMs,
+          elapsedMs,
         });
 
         if (this.state.config.endMode === "finish") {
@@ -1267,7 +1281,7 @@ function computeResult(
 
   const hostResult: PlayerResult = {
     role: "host",
-    wpm: host.wpm,
+    wpm: calcOfficialWpm(host.correctCount, hostElapsed),
     accuracy: host.accuracy,
     elapsedMs: hostElapsed,
     pos: host.pos,
@@ -1276,7 +1290,7 @@ function computeResult(
   };
   const guestResult: PlayerResult = {
     role: "guest",
-    wpm: guest.wpm,
+    wpm: calcOfficialWpm(guest.correctCount, guestElapsed),
     accuracy: guest.accuracy,
     elapsedMs: guestElapsed,
     pos: guest.pos,
@@ -1347,4 +1361,13 @@ function compareFinishMode(
 function finishModeScore(result: PlayerResult): number {
   const accuracyWeight = result.accuracy / 100;
   return result.wpm * accuracyWeight * accuracyWeight;
+}
+
+function elapsedSinceStart(state: InternalState, at: number): number {
+  return Math.max(0, at - (state.startAt ?? at));
+}
+
+function calcOfficialWpm(correctChars: number, elapsedMs: number): number {
+  if (elapsedMs <= 0) return 0;
+  return Math.round(correctChars / 5 / (elapsedMs / 60_000));
 }
