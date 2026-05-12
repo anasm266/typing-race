@@ -23,7 +23,10 @@ export function SpectatorView({
   progress,
   finish,
 }: SpectatorViewProps) {
-  const now = useNow(room.status === "starting" || room.status === "racing");
+  const now = useServerNow(
+    room.serverOffsetMs ?? 0,
+    room.status === "starting" || room.status === "racing"
+  );
   const host = progress.host;
   const guest = progress.guest;
   const hostDone = !!finish.host || !!room.result?.host.finishedPassage;
@@ -254,12 +257,15 @@ function winnerLabel(outcome: RaceOutcome): string {
   return "tie";
 }
 
-function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
+function useServerNow(offsetMs: number, active: boolean): number {
+  const [now, setNow] = useState(() => Date.now() + offsetMs);
   useEffect(() => {
     if (!active) return;
-    const id = window.setInterval(() => setNow(Date.now()), 100);
+    const id = window.setInterval(
+      () => setNow(Date.now() + offsetMs),
+      100
+    );
     return () => window.clearInterval(id);
-  }, [active]);
+  }, [active, offsetMs]);
   return now;
 }

@@ -82,6 +82,10 @@ export interface PublicRoomState {
   playerCount: number;
   spectatorCount: number;
   createdAt: number;
+  /** Server timestamp included with each state broadcast for clock sync. */
+  serverNow?: number;
+  /** Client-derived server clock offset, populated by web/useRoom. */
+  serverOffsetMs?: number;
   /**
    * While status === "ready_check", the ms timestamp at which the race
    * auto-starts if the guest hasn't clicked lock-in yet.

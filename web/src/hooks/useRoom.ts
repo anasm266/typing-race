@@ -121,7 +121,13 @@ export function useRoom(roomId: string): UseRoomResult {
             setRole(null);
             return;
           case "state":
-            setRoomState(msg.room);
+            setRoomState({
+              ...msg.room,
+              serverOffsetMs:
+                msg.room.serverNow === undefined
+                  ? 0
+                  : msg.room.serverNow - Date.now(),
+            });
             if (
               msg.room.status === "starting" ||
               msg.room.status === "waiting"

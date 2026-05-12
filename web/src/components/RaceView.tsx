@@ -44,9 +44,16 @@ export function RaceView({
   const capsLockOn = useCapsLock(
     status === "starting" || status === "racing"
   );
+  const serverOffsetMs = room.serverOffsetMs ?? 0;
+  const now = useServerNow(
+    serverOffsetMs,
+    status === "starting" || racing
+  );
+  const localStartAt =
+    startAt === undefined ? undefined : startAt - serverOffsetMs;
 
   const typing = useTyping(passage.text, {
-    startAt: racing ? startAt : undefined,
+    startAt: racing ? localStartAt : undefined,
   });
   const {
     state: typingState,
@@ -60,8 +67,6 @@ export function RaceView({
   } = typing;
   const selfAccuracy = calcAccuracy(correctChars, totalKeystrokes);
 
-  const now = useNow(status === "starting" || racing);
-
   // Accumulate opponent WPM samples for the post-race graph.
   const [opponentSamples, setOpponentSamples] = useState<WpmSample[]>(
     []
@@ -72,9 +77,9 @@ export function RaceView({
     if (!opponentProgress) return;
     if (lastOpponentWpmRef.current === opponentProgress.wpm) return;
     lastOpponentWpmRef.current = opponentProgress.wpm;
-    const t = Math.round(((Date.now() - startAt) / 1000) * 10) / 10;
+    const t = Math.round(((now - startAt) / 1000) * 10) / 10;
     setOpponentSamples((s) => [...s, { t, wpm: opponentProgress.wpm }]);
-  }, [opponentProgress, racing, startAt]);
+  }, [opponentProgress, racing, startAt, now]);
 
   // Always-on keyboard listener: preventDefault during both countdown
   // and race so Space doesn't scroll the page; forward to handleKey only
@@ -484,14 +489,18 @@ function FooterHint({
   return null;
 }
 
-/* -------------------- useNow -------------------- */
+/* -------------------- server-synced clock -------------------- */
 
-function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
+function useServerNow(offsetMs: number, active: boolean): number {
+  const [now, setNow] = useState(() => Date.now() + offsetMs);
   useEffect(() => {
     if (!active) return;
-    const id = window.setInterval(() => setNow(Date.now()), 100);
+    const id = window.setInterval(
+      () => setNow(Date.now() + offsetMs),
+      100
+    );
     return () => window.clearInterval(id);
-  }, [active]);
+  }, [active, offsetMs]);
+
   return now;
 }

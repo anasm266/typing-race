@@ -80,7 +80,7 @@ function toPublic(s: InternalState): PublicRoomState {
     _expiresAt,
     ...pub
   } = s;
-  return pub;
+  return { ...pub, serverNow: Date.now() };
 }
 
 function zeroProgress(): PlayerProgress {
