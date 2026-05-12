@@ -117,32 +117,32 @@ function normalizeAttachment(ws: WebSocket): Attachment | null {
     typeof raw.spectatorId === "string" &&
     typeof raw.joinedAt === "number"
   ) {
-      return {
-        kind: "spectator",
-        spectatorId: raw.spectatorId,
-        joinedAt: raw.joinedAt,
-        analytics:
-          typeof raw.analytics === "object" && raw.analytics !== null
-            ? (raw.analytics as AnalyticsContext)
-            : undefined,
-      };
-    }
+    return {
+      kind: "spectator",
+      spectatorId: raw.spectatorId,
+      joinedAt: raw.joinedAt,
+      analytics:
+        typeof raw.analytics === "object" && raw.analytics !== null
+          ? (raw.analytics as AnalyticsContext)
+          : undefined,
+    };
+  }
   if (
     (raw.role === "host" || raw.role === "guest") &&
     typeof raw.sessionToken === "string" &&
     typeof raw.joinedAt === "number"
   ) {
-      return {
-        kind: "player",
-        role: raw.role,
-        sessionToken: raw.sessionToken,
-        joinedAt: raw.joinedAt,
-        analytics:
-          typeof raw.analytics === "object" && raw.analytics !== null
-            ? (raw.analytics as AnalyticsContext)
-            : undefined,
-      };
-    }
+    return {
+      kind: "player",
+      role: raw.role,
+      sessionToken: raw.sessionToken,
+      joinedAt: raw.joinedAt,
+      analytics:
+        typeof raw.analytics === "object" && raw.analytics !== null
+          ? (raw.analytics as AnalyticsContext)
+          : undefined,
+    };
+  }
   return null;
 }
 
@@ -201,6 +201,7 @@ export class Room extends DurableObject<Env> {
     };
     await this.persistState();
     await this.trackRoomCreated(this.state);
+    await this.upsertActiveRoom("created");
     return Response.json({ ok: true });
   }
 
@@ -260,6 +261,7 @@ export class Room extends DurableObject<Env> {
         _expiresAt: undefined,
       };
       await this.persistState();
+      await this.upsertActiveRoom("spectator_joined");
       await this.trackSpectatorJoin(
         this.state.roomId,
         joinedAt,
@@ -356,6 +358,7 @@ export class Room extends DurableObject<Env> {
     }
 
     await this.persistState();
+    await this.upsertActiveRoom("player_joined");
     await this.trackRoleJoin(this.state.roomId, role, firstJoinForRole);
     await safeInsertAnalyticsEvent(this.env, analyticsContext, {
       eventName: "player_joined",
@@ -605,6 +608,7 @@ export class Room extends DurableObject<Env> {
               },
             };
             await this.persistState();
+            await this.upsertActiveRoom("finish_grace_started");
             await this.rescheduleAlarm();
             this.broadcast({ t: "state", room: toPublic(this.state) });
           } else {
@@ -634,6 +638,7 @@ export class Room extends DurableObject<Env> {
         } else {
           this.state = { ...this.state, rematchReady: ready };
           await this.persistState();
+          await this.upsertActiveRoom("rematch_requested");
           this.broadcast({ t: "state", room: toPublic(this.state) });
         }
         return;
@@ -674,6 +679,7 @@ export class Room extends DurableObject<Env> {
           rematchReady: allFalse ? undefined : ready,
         };
         await this.persistState();
+        await this.upsertActiveRoom("rematch_cancelled");
         this.broadcast({ t: "state", room: toPublic(this.state) });
         return;
       }
@@ -727,6 +733,7 @@ export class Room extends DurableObject<Env> {
             : undefined,
       };
       await this.persistState();
+      await this.upsertActiveRoom("spectator_left");
       await this.trackSpectatorLeave(
         this.state.roomId,
         att.joinedAt,
@@ -802,6 +809,7 @@ export class Room extends DurableObject<Env> {
       _expiresAt: expiresAt,
     };
     await this.persistState();
+    await this.upsertActiveRoom("player_left");
     if (
       (statusBeforeDisconnect === "waiting" ||
         statusBeforeDisconnect === "ready_check" ||
@@ -891,6 +899,7 @@ export class Room extends DurableObject<Env> {
       const liveSpectators = this.countSpectatorSockets();
 
       if (livePlayers + liveSpectators === 0) {
+        await this.deleteActiveRoom(this.state.roomId);
         this.state = null;
         await this.ctx.storage.delete("state");
         await this.ctx.storage.deleteAlarm();
@@ -904,6 +913,7 @@ export class Room extends DurableObject<Env> {
         _expiresAt: undefined,
       };
       await this.persistState();
+      await this.upsertActiveRoom("expiry_cancelled");
       await this.rescheduleAlarm();
       return;
     }
@@ -939,6 +949,7 @@ export class Room extends DurableObject<Env> {
       }
       this.state = next;
       await this.persistState();
+      await this.upsertActiveRoom("race_started");
       await this.trackRaceStarted(this.state.roomId, this.state.startAt ?? now);
       await safeInsertAnalyticsEvent(
         this.env,
@@ -1012,6 +1023,7 @@ export class Room extends DurableObject<Env> {
       finishGrace: undefined,
     };
     await this.persistState();
+    await this.upsertActiveRoom("race_ended");
     await this.recordRaceEnd(snapshotForDb, result, endedAt);
     await safeInsertAnalyticsEvent(
       this.env,
@@ -1109,6 +1121,7 @@ export class Room extends DurableObject<Env> {
       readyCheckUntil: undefined,
     };
     await this.persistState();
+    await this.upsertActiveRoom("countdown_started");
     await this.rescheduleAlarm();
     this.broadcast({ t: "state", room: toPublic(this.state) });
   }
@@ -1135,6 +1148,7 @@ export class Room extends DurableObject<Env> {
       _source: this.state._source,
     };
     await this.persistState();
+    await this.upsertActiveRoom("rematch_started");
     await this.rescheduleAlarm();
     this.broadcast({ t: "state", room: toPublic(this.state) });
   }
@@ -1280,6 +1294,70 @@ export class Room extends DurableObject<Env> {
         state.config.timeLimit
       )
       .run();
+  }
+
+  private async upsertActiveRoom(lastEvent: string): Promise<void> {
+    if (!this.state) return;
+    const state = this.state;
+    const sockets = this.connectedRoles();
+    await this.env.DB.prepare(
+      `INSERT OR REPLACE INTO active_rooms (
+         room_id,
+         created_at,
+         updated_at,
+         status,
+         source,
+         config_end_mode,
+         config_passage_length,
+         config_time_limit,
+         passage_id,
+         passage_words,
+         player_count,
+         spectator_count,
+         host_connected,
+         guest_connected,
+         race_started_at,
+         race_ended_at,
+         last_event,
+         expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        state.roomId,
+        state.createdAt,
+        Date.now(),
+        state.status,
+        state._source,
+        state.config.endMode,
+        state.config.passageLength,
+        state.config.timeLimit,
+        state.passage.id,
+        state.passage.wordCount,
+        state.playerCount,
+        state.spectatorCount,
+        sockets.host ? 1 : 0,
+        sockets.guest ? 1 : 0,
+        state.startAt ?? null,
+        state.result ? Date.now() : null,
+        lastEvent,
+        state._expiresAt ?? null
+      )
+      .run();
+  }
+
+  private async deleteActiveRoom(roomId: string): Promise<void> {
+    await this.env.DB.prepare(`DELETE FROM active_rooms WHERE room_id = ?`)
+      .bind(roomId)
+      .run();
+  }
+
+  private connectedRoles(): { host: boolean; guest: boolean } {
+    const roles = new Set<PlayerRole>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = normalizeAttachment(ws);
+      if (att?.kind === "player") roles.add(att.role);
+    }
+    return { host: roles.has("host"), guest: roles.has("guest") };
   }
 
   private async trackRoleJoin(

@@ -215,6 +215,25 @@ interface AdminGroupRow {
   count: number;
 }
 
+interface ActiveRoomRow {
+  room_id: string;
+  created_at: number;
+  updated_at: number;
+  status: string;
+  config_end_mode: string;
+  config_passage_length: string;
+  config_time_limit: number;
+  passage_words: number;
+  player_count: number;
+  spectator_count: number;
+  host_connected: number;
+  guest_connected: number;
+  race_started_at: number | null;
+  race_ended_at: number | null;
+  last_event: string | null;
+  expires_at: number | null;
+}
+
 const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") {
@@ -502,6 +521,7 @@ async function handleAdminAnalytics(
       topPages,
       devices,
       browsers,
+      activeRooms,
       recentEvents,
     ] = await Promise.all([
       topGroups(env, "referrer_host", cutoff, "direct"),
@@ -509,6 +529,17 @@ async function handleAdminAnalytics(
       topGroups(env, "path", cutoff, "unknown"),
       topGroups(env, "device", cutoff, "unknown"),
       topGroups(env, "browser", cutoff, "unknown"),
+      env.DB.prepare(
+        `SELECT room_id, created_at, updated_at, status,
+                config_end_mode, config_passage_length, config_time_limit,
+                passage_words, player_count, spectator_count,
+                host_connected, guest_connected,
+                race_started_at, race_ended_at, last_event, expires_at
+           FROM active_rooms
+          WHERE source = 'user'
+          ORDER BY updated_at DESC
+          LIMIT 50`
+      ).all<ActiveRoomRow>(),
       env.DB.prepare(
         `SELECT id, event_at, event_name, browser_id, session_id, room_id,
                 participant_kind, player_role, path, referrer_host,
@@ -581,6 +612,24 @@ async function handleAdminAnalytics(
         topPages,
         devices,
         browsers,
+        activeRooms: (activeRooms.results ?? []).map((room) => ({
+          roomId: room.room_id,
+          createdAt: room.created_at,
+          updatedAt: room.updated_at,
+          status: room.status,
+          endMode: room.config_end_mode,
+          passageLength: room.config_passage_length,
+          timeLimit: room.config_time_limit,
+          passageWords: room.passage_words,
+          playerCount: room.player_count,
+          spectatorCount: room.spectator_count,
+          hostConnected: room.host_connected === 1,
+          guestConnected: room.guest_connected === 1,
+          raceStartedAt: room.race_started_at,
+          raceEndedAt: room.race_ended_at,
+          lastEvent: room.last_event,
+          expiresAt: room.expires_at,
+        })),
         recentEvents: (recentEvents.results ?? []).map((event) => ({
           id: event.id,
           eventAt: event.event_at,

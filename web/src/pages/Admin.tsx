@@ -42,6 +42,24 @@ interface AdminAnalytics {
   topPages: GroupRow[];
   devices: GroupRow[];
   browsers: GroupRow[];
+  activeRooms: Array<{
+    roomId: string;
+    createdAt: number;
+    updatedAt: number;
+    status: string;
+    endMode: string;
+    passageLength: string;
+    timeLimit: number;
+    passageWords: number;
+    playerCount: number;
+    spectatorCount: number;
+    hostConnected: boolean;
+    guestConnected: boolean;
+    raceStartedAt: number | null;
+    raceEndedAt: number | null;
+    lastEvent: string | null;
+    expiresAt: number | null;
+  }>;
   recentEvents: Array<{
     id: string;
     eventAt: number;
@@ -285,6 +303,72 @@ function Dashboard({ data }: { data: AdminAnalytics }) {
         <GroupTable title="devices" rows={data.devices} />
         <GroupTable title="browsers" rows={data.browsers} />
       </section>
+
+      <Panel title={`active rooms · ${data.activeRooms.length}`}>
+        <div className="flex flex-col divide-y divide-border">
+          {data.activeRooms.length === 0 && (
+            <div className="py-6 text-sm text-fg-dim">no active rooms</div>
+          )}
+          {data.activeRooms.map((room) => (
+            <div
+              key={room.roomId}
+              className="grid gap-3 py-3 text-xs lg:grid-cols-[1.1fr_0.8fr_0.8fr_1fr_auto]"
+            >
+              <div className="min-w-0">
+                <a
+                  href={`/room/${room.roomId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block truncate text-accent hover:underline"
+                >
+                  /room/{room.roomId}
+                </a>
+                <div className="text-fg-dimmer">
+                  created {timeAgo(room.createdAt)} · updated{" "}
+                  {timeAgo(room.updatedAt)}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-fg">{room.status}</div>
+                <div className="text-fg-dimmer">{room.lastEvent ?? "-"}</div>
+              </div>
+
+              <div>
+                <div className="text-fg">
+                  {room.passageLength} · {room.endMode}
+                </div>
+                <div className="text-fg-dimmer">
+                  {room.passageWords} words
+                  {room.endMode === "time" ? ` · ${room.timeLimit}s` : ""}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-fg">
+                  players {room.playerCount}/2 · spectators{" "}
+                  {room.spectatorCount}
+                </div>
+                <div className="text-fg-dimmer">
+                  host {room.hostConnected ? "online" : "off"} · guest{" "}
+                  {room.guestConnected ? "online" : "off"}
+                </div>
+              </div>
+
+              <button
+                onClick={() =>
+                  navigator.clipboard.writeText(
+                    `${window.location.origin}/room/${room.roomId}`
+                  )
+                }
+                className="self-start border border-border px-2 py-1 text-[0.65rem] uppercase tracking-[0.14em] text-fg-dim transition-colors hover:border-accent hover:text-accent"
+              >
+                copy link
+              </button>
+            </div>
+          ))}
+        </div>
+      </Panel>
 
       <Panel title="recent events">
         <div className="flex flex-col divide-y divide-border">
