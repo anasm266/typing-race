@@ -7,6 +7,7 @@ import type {
 } from "../lib/protocol";
 import { formatElapsed, type WpmSample } from "../lib/wpm";
 import { addLocalHistoryEntry } from "../lib/localHistory";
+import { trackEvent } from "../lib/analytics";
 import { WpmGraph } from "./WpmGraph";
 
 interface EndScreenProps {
@@ -62,6 +63,19 @@ export function EndScreen({
       correctChars: me.correctCount,
       opponentWpm: them.wpm,
       opponentAccuracy: them.accuracy,
+    });
+    trackEvent("room_result_viewed", {
+      roomId: room.roomId,
+      path: `/room/${room.roomId}`,
+      metadata: {
+        role,
+        outcome,
+        endReason: result.endReason,
+        passageLength: room.config.passageLength,
+        endMode: room.config.endMode,
+        myWpm: me.wpm,
+        opponentWpm: them.wpm,
+      },
     });
   }, [
     result,

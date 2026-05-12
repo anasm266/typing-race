@@ -3,6 +3,7 @@ import type {
   CreateRoomResponse,
   RoomConfig,
 } from "./protocol";
+import { analyticsSearchParams, getAnalyticsIdentity } from "./analytics";
 
 export const WORKER_URL =
   import.meta.env.VITE_WORKER_URL ?? "http://localhost:8787";
@@ -12,7 +13,10 @@ export const WS_URL = WORKER_URL.replace(/^http/, "ws");
 export async function createRoom(
   config?: Partial<RoomConfig>
 ): Promise<CreateRoomResponse> {
-  const body: CreateRoomRequest = config ? { config } : {};
+  const body: CreateRoomRequest = {
+    ...(config ? { config } : {}),
+    analytics: getAnalyticsIdentity(),
+  };
   const res = await fetch(`${WORKER_URL}/room`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -26,9 +30,9 @@ export async function createRoom(
 
 export function roomWsUrl(roomId: string, sessionToken?: string): string {
   const base = `${WS_URL}/room/${encodeURIComponent(roomId)}/ws`;
-  return sessionToken
-    ? `${base}?token=${encodeURIComponent(sessionToken)}`
-    : base;
+  const params = analyticsSearchParams();
+  if (sessionToken) params.set("token", sessionToken);
+  return `${base}?${params.toString()}`;
 }
 
 const TOKEN_KEY_PREFIX = "typing-race:token:";

@@ -179,6 +179,10 @@ export type ServerMsg =
 export interface CreateRoomRequest {
   config?: Partial<RoomConfig>;
   source?: RoomSource;
+  analytics?: {
+    browserId?: string;
+    sessionId?: string;
+  };
 }
 
 export interface CreateRoomResponse {

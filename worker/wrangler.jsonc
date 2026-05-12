@@ -44,6 +44,14 @@
         "limit": 60,
         "period": 60
       }
+    },
+    {
+      "name": "EVENT_RATE_LIMITER",
+      "namespace_id": "2661003",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
     }
   ],
   "vars": {
@@ -87,6 +95,14 @@
           "namespace_id": "2662002",
           "simple": {
             "limit": 5000,
+            "period": 60
+          }
+        },
+        {
+          "name": "EVENT_RATE_LIMITER",
+          "namespace_id": "2662003",
+          "simple": {
+            "limit": 10000,
             "period": 60
           }
         }

@@ -4,6 +4,7 @@ import { useRoom } from "../hooks/useRoom";
 import { RaceView } from "../components/RaceView";
 import { ReadyCheck } from "../components/ReadyCheck";
 import { SpectatorView } from "../components/SpectatorView";
+import { trackEvent } from "../lib/analytics";
 
 export function Room() {
   const params = useParams<{ id: string }>();
@@ -26,6 +27,13 @@ function RoomSession({ roomId }: { roomId: string }) {
     spectatorFinish,
     send,
   } = useRoom(roomId);
+
+  useEffect(() => {
+    trackEvent("room_opened", {
+      roomId,
+      path: `/room/${roomId}`,
+    });
+  }, [roomId]);
 
   if (error === "room_not_found") {
     return (

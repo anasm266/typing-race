@@ -20,13 +20,21 @@ import {
   START_BUFFER_MS,
 } from "./protocol";
 import { pickPassage } from "./passages";
+import {
+  analyticsContextFromRequest,
+  safeInsertAnalyticsEvent,
+  type AnalyticsContext,
+} from "./analytics";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
   DB: D1Database;
   SENTRY_DSN: string;
+  ADMIN_ANALYTICS_TOKEN?: string;
+  ANALYTICS_IP_HASH_SALT?: string;
   ROOM_CREATE_RATE_LIMITER: RateLimit;
   WS_JOIN_RATE_LIMITER: RateLimit;
+  EVENT_RATE_LIMITER: RateLimit;
 }
 
 interface PlayerAttachment {
@@ -34,12 +42,14 @@ interface PlayerAttachment {
   role: PlayerRole;
   sessionToken: string;
   joinedAt: number;
+  analytics?: AnalyticsContext;
 }
 
 interface SpectatorAttachment {
   kind: "spectator";
   spectatorId: string;
   joinedAt: number;
+  analytics?: AnalyticsContext;
 }
 
 type Attachment = PlayerAttachment | SpectatorAttachment;
@@ -107,24 +117,32 @@ function normalizeAttachment(ws: WebSocket): Attachment | null {
     typeof raw.spectatorId === "string" &&
     typeof raw.joinedAt === "number"
   ) {
-    return {
-      kind: "spectator",
-      spectatorId: raw.spectatorId,
-      joinedAt: raw.joinedAt,
-    };
-  }
+      return {
+        kind: "spectator",
+        spectatorId: raw.spectatorId,
+        joinedAt: raw.joinedAt,
+        analytics:
+          typeof raw.analytics === "object" && raw.analytics !== null
+            ? (raw.analytics as AnalyticsContext)
+            : undefined,
+      };
+    }
   if (
     (raw.role === "host" || raw.role === "guest") &&
     typeof raw.sessionToken === "string" &&
     typeof raw.joinedAt === "number"
   ) {
-    return {
-      kind: "player",
-      role: raw.role,
-      sessionToken: raw.sessionToken,
-      joinedAt: raw.joinedAt,
-    };
-  }
+      return {
+        kind: "player",
+        role: raw.role,
+        sessionToken: raw.sessionToken,
+        joinedAt: raw.joinedAt,
+        analytics:
+          typeof raw.analytics === "object" && raw.analytics !== null
+            ? (raw.analytics as AnalyticsContext)
+            : undefined,
+      };
+    }
   return null;
 }
 
@@ -208,6 +226,10 @@ export class Room extends DurableObject<Env> {
 
     const url = new URL(request.url);
     const providedToken = url.searchParams.get("token");
+    const analyticsContext = await analyticsContextFromRequest(this.env, request, {
+      path: `/room/${this.state.roomId}`,
+      source: this.state._source,
+    });
 
     const resolved = this.resolveConnection(providedToken);
 
@@ -228,6 +250,7 @@ export class Room extends DurableObject<Env> {
         kind: "spectator",
         spectatorId: crypto.randomUUID(),
         joinedAt,
+        analytics: analyticsContext,
       } satisfies SpectatorAttachment);
       this.ctx.acceptWebSocket(server);
 
@@ -242,6 +265,15 @@ export class Room extends DurableObject<Env> {
         joinedAt,
         this.state.spectatorCount
       );
+      await safeInsertAnalyticsEvent(this.env, analyticsContext, {
+        eventName: "spectator_joined",
+        roomId: this.state.roomId,
+        participantKind: "spectator",
+        metadata: {
+          spectatorCount: this.state.spectatorCount,
+          status: this.state.status,
+        },
+      });
       await this.rescheduleAlarm();
 
       this.safeSend(server, { t: "spectator_welcome" });
@@ -275,6 +307,7 @@ export class Room extends DurableObject<Env> {
       role,
       sessionToken,
       joinedAt: Date.now(),
+      analytics: analyticsContext,
     } satisfies PlayerAttachment);
     this.ctx.acceptWebSocket(server);
 
@@ -324,6 +357,17 @@ export class Room extends DurableObject<Env> {
 
     await this.persistState();
     await this.trackRoleJoin(this.state.roomId, role, firstJoinForRole);
+    await safeInsertAnalyticsEvent(this.env, analyticsContext, {
+      eventName: "player_joined",
+      roomId: this.state.roomId,
+      participantKind: "player",
+      playerRole: role,
+      metadata: {
+        firstJoinForRole,
+        playerCount: this.state.playerCount,
+        status: this.state.status,
+      },
+    });
     if (entersReadyCheck) {
       await this.trackReadyCheckStarted(
         this.state.roomId,
@@ -688,6 +732,19 @@ export class Room extends DurableObject<Env> {
         att.joinedAt,
         Date.now()
       );
+      await safeInsertAnalyticsEvent(
+        this.env,
+        this.withRoomAnalyticsDefaults(att.analytics),
+        {
+          eventName: "spectator_left",
+          roomId: this.state.roomId,
+          participantKind: "spectator",
+          metadata: {
+            spectatorCount: this.state.spectatorCount,
+            watchMs: Math.max(0, Date.now() - att.joinedAt),
+          },
+        }
+      );
       await this.rescheduleAlarm();
       this.broadcastExcept(closing, { t: "state", room: toPublic(this.state) });
       return;
@@ -752,6 +809,20 @@ export class Room extends DurableObject<Env> {
     ) {
       await this.trackPreStartDrop(this.state.roomId, att.role);
     }
+    await safeInsertAnalyticsEvent(
+      this.env,
+      this.withRoomAnalyticsDefaults(att.analytics),
+      {
+        eventName: "player_left",
+        roomId: this.state.roomId,
+        participantKind: "player",
+        playerRole: att.role,
+        metadata: {
+          statusBeforeDisconnect,
+          playerCount: this.state.playerCount,
+        },
+      }
+    );
     await this.rescheduleAlarm();
 
     for (const other of this.ctx.getWebSockets()) {
@@ -869,6 +940,20 @@ export class Room extends DurableObject<Env> {
       this.state = next;
       await this.persistState();
       await this.trackRaceStarted(this.state.roomId, this.state.startAt ?? now);
+      await safeInsertAnalyticsEvent(
+        this.env,
+        this.withRoomAnalyticsDefaults(),
+        {
+          eventName: "race_started",
+          eventAt: this.state.startAt ?? now,
+          roomId: this.state.roomId,
+          metadata: {
+            endMode: this.state.config.endMode,
+            passageLength: this.state.config.passageLength,
+            timeLimit: this.state.config.timeLimit,
+          },
+        }
+      );
       this.broadcast({ t: "state", room: toPublic(this.state) });
       await this.rescheduleAlarm();
       return;
@@ -928,6 +1013,23 @@ export class Room extends DurableObject<Env> {
     };
     await this.persistState();
     await this.recordRaceEnd(snapshotForDb, result, endedAt);
+    await safeInsertAnalyticsEvent(
+      this.env,
+      this.withRoomAnalyticsDefaults(),
+      {
+        eventName: "race_ended",
+        eventAt: endedAt,
+        roomId: snapshotForDb.roomId,
+        metadata: {
+          endReason: result.endReason,
+          outcome: result.outcome,
+          endMode: snapshotForDb.config.endMode,
+          passageLength: snapshotForDb.config.passageLength,
+          hostWpm: result.host.wpm,
+          guestWpm: result.guest.wpm,
+        },
+      }
+    );
     await this.rescheduleAlarm();
     this.broadcast({ t: "state", room: toPublic(this.state) });
   }
@@ -1146,6 +1248,16 @@ export class Room extends DurableObject<Env> {
     } catch {
       // socket closed or closing — ignore
     }
+  }
+
+  private withRoomAnalyticsDefaults(
+    context?: AnalyticsContext
+  ): AnalyticsContext {
+    return {
+      ...context,
+      path: context?.path ?? `/room/${this.state?.roomId ?? ""}`,
+      source: this.state?._source ?? context?.source ?? "user",
+    };
   }
 
   private async trackRoomCreated(state: InternalState): Promise<void> {

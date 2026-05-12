@@ -10,6 +10,7 @@ import { ResultScreen } from "./ResultScreen";
 import type { PassageLength } from "../lib/protocol";
 import { addLocalHistoryEntry } from "../lib/localHistory";
 import { calcAccuracy } from "../lib/wpm";
+import { trackEvent } from "../lib/analytics";
 
 export function TypingRace({
   passageLength,
@@ -23,6 +24,7 @@ export function TypingRace({
   const capsLockOn = useCapsLock(typing.state !== "done");
   const { state, handleKey, reset } = typing;
   const recordedResultRef = useRef<string | null>(null);
+  const recordedStartRef = useRef<string | null>(null);
 
   const restartCurrent = useCallback(() => {
     reset();
@@ -74,6 +76,18 @@ export function TypingRace({
   }, [state, handleKey, restart, restartCurrent]);
 
   useEffect(() => {
+    if (typing.state !== "typing") return;
+    if (recordedStartRef.current === passage.id) return;
+    recordedStartRef.current = passage.id;
+    trackEvent("practice_started", {
+      metadata: {
+        passageLength: passage.length,
+        passageWords: passage.wordCount,
+      },
+    });
+  }, [passage.id, passage.length, passage.wordCount, typing.state]);
+
+  useEffect(() => {
     if (typing.state !== "done") return;
 
     const id = [
@@ -97,6 +111,15 @@ export function TypingRace({
       elapsedMs: typing.elapsedMs,
       correctChars: typing.correctChars,
       totalKeystrokes: typing.totalKeystrokes,
+    });
+    trackEvent("practice_completed", {
+      metadata: {
+        passageLength: passage.length,
+        passageWords: passage.wordCount,
+        wpm: typing.wpm,
+        accuracy: calcAccuracy(typing.correctChars, typing.totalKeystrokes),
+        elapsedMs: typing.elapsedMs,
+      },
     });
   }, [
     passage.id,

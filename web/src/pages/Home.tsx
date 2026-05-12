@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { createRoom } from "../lib/api";
+import { trackEvent } from "../lib/analytics";
 import {
   getSavedPassageLength,
   savePassageLength,
@@ -26,6 +27,13 @@ export function Home() {
   async function handleCreate() {
     setCreating(true);
     setError(null);
+    trackEvent("create_room_clicked", {
+      metadata: {
+        passageLength: config.passageLength,
+        endMode: config.endMode,
+        timeLimit: config.timeLimit,
+      },
+    });
     try {
       const safeConfig =
         config.passageLength === "word"
