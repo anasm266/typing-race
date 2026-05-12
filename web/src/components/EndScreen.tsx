@@ -282,6 +282,10 @@ function SprintPlayerCard({
         </div>
         <div className="text-right text-xs text-fg-dim">
           <div>
+            <span className="tabular-nums text-fg">{result.wpm}</span>{" "}
+            wpm
+          </div>
+          <div>
             <span className="tabular-nums text-fg">{result.accuracy}%</span>{" "}
             accuracy
           </div>
@@ -571,6 +575,7 @@ function ResultColumn({
             value={formatScore(finishModeScore(result))}
           />
         )}
+        {isWordSprint && <Stat label="wpm" value={`${result.wpm}`} />}
         <Stat label="accuracy" value={`${result.accuracy}%`} />
         {!isWordSprint && (
           <Stat label="time" value={formatElapsed(result.elapsedMs)} />
