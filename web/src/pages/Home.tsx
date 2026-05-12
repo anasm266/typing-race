@@ -140,7 +140,7 @@ export function Home() {
         {error && (
           <span className="text-error text-sm">error: {error}</span>
         )}
-        <div className="flex gap-4 text-xs text-fg-dim mt-2">
+        <div className="flex flex-wrap justify-center gap-4 text-xs text-fg-dim mt-2">
           <Link
             href="/solo"
             className="hover:text-accent transition-colors"
@@ -153,6 +153,13 @@ export function Home() {
             className="hover:text-accent transition-colors"
           >
             recent races →
+          </Link>
+          <span className="text-fg-dimmer">·</span>
+          <Link
+            href="/history"
+            className="hover:text-accent transition-colors"
+          >
+            your history →
           </Link>
           <span className="text-fg-dimmer">·</span>
           <Link

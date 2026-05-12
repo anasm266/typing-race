@@ -25,6 +25,10 @@ export function Solo() {
         </Link>
         <span className="text-fg-dimmer">.</span>
         <span>practice . offline</span>
+        <span className="text-fg-dimmer">.</span>
+        <Link href="/history" className="hover:text-accent transition-colors">
+          history
+        </Link>
       </div>
 
       <div className="flex flex-wrap justify-center gap-2">

@@ -4,6 +4,7 @@ import { Room } from "./pages/Room";
 import { Solo } from "./pages/Solo";
 import { Recent } from "./pages/Recent";
 import { Analytics } from "./pages/Analytics";
+import { History } from "./pages/History";
 import { HealthPill } from "./components/HealthPill";
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/" component={Home} />
           <Route path="/room/:id" component={Room} />
           <Route path="/solo" component={Solo} />
+          <Route path="/history" component={History} />
           <Route path="/recent" component={Recent} />
           <Route path="/analytics" component={Analytics} />
           <Route>

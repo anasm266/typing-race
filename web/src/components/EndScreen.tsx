@@ -6,6 +6,7 @@ import type {
   RaceResult,
 } from "../lib/protocol";
 import { formatElapsed, type WpmSample } from "../lib/wpm";
+import { addLocalHistoryEntry } from "../lib/localHistory";
 import { WpmGraph } from "./WpmGraph";
 
 interface EndScreenProps {
@@ -28,6 +29,49 @@ export function EndScreen({
   onNewRace,
 }: EndScreenProps) {
   const result = room.result;
+
+  useEffect(() => {
+    if (!result || !role) return;
+
+    const me = role === "guest" ? result.guest : result.host;
+    const them = role === "guest" ? result.host : result.guest;
+    const outcome = interpretOutcome(result, role);
+    const raceDurationMs = Math.max(
+      result.host.elapsedMs,
+      result.guest.elapsedMs
+    );
+
+    addLocalHistoryEntry({
+      id: [
+        "race",
+        room.roomId,
+        room.passage.id,
+        result.endReason,
+        raceDurationMs,
+      ].join(":"),
+      kind: "race",
+      passageLength: room.config.passageLength,
+      passageWords: room.passage.wordCount,
+      passageId: room.passage.id,
+      endMode: room.config.endMode,
+      endReason: result.endReason,
+      outcome,
+      wpm: me.wpm,
+      accuracy: me.accuracy,
+      elapsedMs: me.elapsedMs,
+      correctChars: me.correctCount,
+      opponentWpm: them.wpm,
+      opponentAccuracy: them.accuracy,
+    });
+  }, [
+    result,
+    role,
+    room.config.endMode,
+    room.config.passageLength,
+    room.passage.id,
+    room.passage.wordCount,
+    room.roomId,
+  ]);
 
   const iAmReady =
     !!role && !!room.rematchReady && room.rematchReady[role];

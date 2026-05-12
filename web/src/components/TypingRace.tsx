@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useCapsLock } from "../hooks/useCapsLock";
 import { useTyping } from "../hooks/useTyping";
 import { randomPassage, type Passage } from "../lib/passages";
@@ -8,6 +8,8 @@ import { TouchKeyboardInput } from "./TouchKeyboardInput";
 import { Stats } from "./Stats";
 import { ResultScreen } from "./ResultScreen";
 import type { PassageLength } from "../lib/protocol";
+import { addLocalHistoryEntry } from "../lib/localHistory";
+import { calcAccuracy } from "../lib/wpm";
 
 export function TypingRace({
   passageLength,
@@ -20,6 +22,7 @@ export function TypingRace({
   const typing = useTyping(passage.text);
   const capsLockOn = useCapsLock(typing.state !== "done");
   const { state, handleKey, reset } = typing;
+  const recordedResultRef = useRef<string | null>(null);
 
   const restartCurrent = useCallback(() => {
     reset();
@@ -69,6 +72,42 @@ export function TypingRace({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [state, handleKey, restart, restartCurrent]);
+
+  useEffect(() => {
+    if (typing.state !== "done") return;
+
+    const id = [
+      "practice",
+      passage.id,
+      typing.elapsedMs,
+      typing.correctChars,
+      typing.totalKeystrokes,
+    ].join(":");
+    if (recordedResultRef.current === id) return;
+    recordedResultRef.current = id;
+
+    addLocalHistoryEntry({
+      id,
+      kind: "practice",
+      passageLength: passage.length,
+      passageWords: passage.wordCount,
+      passageId: passage.id,
+      wpm: typing.wpm,
+      accuracy: calcAccuracy(typing.correctChars, typing.totalKeystrokes),
+      elapsedMs: typing.elapsedMs,
+      correctChars: typing.correctChars,
+      totalKeystrokes: typing.totalKeystrokes,
+    });
+  }, [
+    passage.id,
+    passage.length,
+    passage.wordCount,
+    typing.correctChars,
+    typing.elapsedMs,
+    typing.state,
+    typing.totalKeystrokes,
+    typing.wpm,
+  ]);
 
   if (typing.state === "done") {
     return (
