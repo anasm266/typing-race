@@ -696,9 +696,9 @@ async function handleAnalytics(env: Env): Promise<Response> {
        WHERE source = 'user' AND created_at >= ?
        GROUP BY date(created_at / 1000, 'unixepoch')
        ORDER BY day DESC
-       LIMIT 14`
+       LIMIT 90`
     )
-      .bind(Date.now() - 14 * 24 * 60 * 60 * 1000)
+      .bind(Date.now() - 90 * 24 * 60 * 60 * 1000)
       .all<AnalyticsDailyRow>();
 
     return json({

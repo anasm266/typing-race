@@ -68,8 +68,8 @@ export function Analytics() {
         </span>
         <h2 className="text-2xl">room and race funnel</h2>
         <p className="text-xs text-fg-dimmer">
-          tracks real room creation, second-player joins, starts, completions,
-          and pre-start drop-offs
+          summary is all-time. daily rows are the last 90 days (only days with
+          activity appear).
         </p>
       </header>
 
@@ -85,28 +85,33 @@ export function Analytics() {
 
       {status.kind === "ok" && (
         <>
-          <section className="grid w-full gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <MetricCard label="rooms created" value={status.summary.roomsCreated} />
-            <MetricCard
-              label="second player joined"
-              value={status.summary.roomsJoined}
-            />
-            <MetricCard
-              label="races started"
-              value={status.summary.racesStarted}
-            />
-            <MetricCard
-              label="races completed"
-              value={status.summary.racesCompleted}
-            />
-            <MetricCard
-              label="pre-start drops"
-              value={status.summary.preStartDrops}
-            />
-            <MetricCard
-              label="disconnect endings"
-              value={status.summary.racesDisconnected}
-            />
+          <section className="flex w-full flex-col gap-2">
+            <h3 className="text-[0.65rem] uppercase tracking-[0.16em] text-fg-dim">
+              all time
+            </h3>
+            <div className="grid w-full gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <MetricCard label="rooms created" value={status.summary.roomsCreated} />
+              <MetricCard
+                label="second player joined"
+                value={status.summary.roomsJoined}
+              />
+              <MetricCard
+                label="races started"
+                value={status.summary.racesStarted}
+              />
+              <MetricCard
+                label="races completed"
+                value={status.summary.racesCompleted}
+              />
+              <MetricCard
+                label="pre-start drops"
+                value={status.summary.preStartDrops}
+              />
+              <MetricCard
+                label="disconnect endings"
+                value={status.summary.racesDisconnected}
+              />
+            </div>
           </section>
 
           {funnel && (
@@ -120,7 +125,11 @@ export function Analytics() {
             </section>
           )}
 
-          <section className="w-full border border-border">
+          <section className="flex w-full flex-col gap-2">
+            <h3 className="text-[0.65rem] uppercase tracking-[0.16em] text-fg-dim">
+              last 90 days
+            </h3>
+            <div className="w-full border border-border">
             <div className="grid grid-cols-[1.1fr_repeat(5,minmax(0,1fr))] gap-3 border-b border-border px-4 py-3 text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
               <span>day</span>
               <span className="text-right">created</span>
@@ -159,6 +168,7 @@ export function Analytics() {
                 </div>
               ))
             )}
+            </div>
           </section>
         </>
       )}
