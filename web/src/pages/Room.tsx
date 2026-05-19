@@ -6,11 +6,7 @@ import { ReadyCheck } from "../components/ReadyCheck";
 import { SpectatorView } from "../components/SpectatorView";
 import { trackEvent } from "../lib/analytics";
 import type { PublicRoomState, RoomConfig } from "../lib/protocol";
-import {
-  formatCountdownMs,
-  raceConfigSummary,
-  serverNowFromRoom,
-} from "../lib/raceLabels";
+import { formatCountdownMs, raceConfigSummary } from "../lib/raceLabels";
 import {
   canNativeShare,
   copyText,
@@ -252,7 +248,6 @@ function WaitingLobby({
   const [inviteCopied, setInviteCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const nativeShare = canNativeShare();
-  const lobbyRemainingMs = useLobbyCountdown(room);
 
   useEffect(() => {
     inviteRef.current?.focus();
@@ -308,8 +303,11 @@ function WaitingLobby({
         </div>
         <h2 className="text-2xl mt-2">invite a friend</h2>
         <RaceConfigBadges config={room.config} />
-        {lobbyRemainingMs !== null && (
-          <LobbyExpiryCountdown remainingMs={lobbyRemainingMs} />
+        {room.status === "waiting" && room.lobbyExpiresAt !== undefined && (
+          <LobbyExpiryCountdown
+            expiresAt={room.lobbyExpiresAt}
+            serverOffsetMs={room.serverOffsetMs ?? 0}
+          />
         )}
       </div>
 
@@ -383,28 +381,6 @@ function WaitingLobby({
   );
 }
 
-function useLobbyCountdown(room: PublicRoomState): number | null {
-  const [remainingMs, setRemainingMs] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (room.status !== "waiting" || room.lobbyExpiresAt === undefined) {
-      setRemainingMs(null);
-      return;
-    }
-
-    const tick = () => {
-      const now = serverNowFromRoom(room);
-      setRemainingMs(Math.max(0, room.lobbyExpiresAt! - now));
-    };
-
-    tick();
-    const id = window.setInterval(tick, 250);
-    return () => window.clearInterval(id);
-  }, [room.status, room.lobbyExpiresAt, room.serverOffsetMs]);
-
-  return remainingMs;
-}
-
 function RaceConfigBadges({ config }: { config: RoomConfig }) {
   const summary = raceConfigSummary(config);
   const [length, mode] = summary.split(" · ");
@@ -439,7 +415,30 @@ function ConfigBadge({
   );
 }
 
-function LobbyExpiryCountdown({ remainingMs }: { remainingMs: number }) {
+function LobbyExpiryCountdown({
+  expiresAt,
+  serverOffsetMs,
+}: {
+  expiresAt: number;
+  serverOffsetMs: number;
+}) {
+  const [remainingMs, setRemainingMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    const tick = () => {
+      setRemainingMs(
+        Math.max(0, expiresAt - (Date.now() + serverOffsetMs))
+      );
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [expiresAt, serverOffsetMs]);
+
+  if (remainingMs === null) {
+    return null;
+  }
+
   const urgent = remainingMs < 60_000;
   return (
     <p
