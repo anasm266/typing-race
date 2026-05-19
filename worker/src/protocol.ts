@@ -82,6 +82,11 @@ export interface PublicRoomState {
   playerCount: number;
   spectatorCount: number;
   createdAt: number;
+  /**
+   * While status === "waiting", ms timestamp after which the room is
+   * closed if a second player has not joined.
+   */
+  lobbyExpiresAt?: number;
   /** Server timestamp included with each state broadcast for clock sync. */
   serverNow?: number;
   /** Client-derived server clock offset, populated by web/useRoom. */

@@ -1,3 +1,6 @@
+import type { RoomConfig } from "./protocol";
+import { raceConfigSummary } from "./raceLabels";
+
 /** Production origin for static meta tags; runtime uses `window.location.origin`. */
 export const SITE_ORIGIN = "https://typing-race.pages.dev";
 
@@ -8,7 +11,11 @@ export function roomShareUrl(
   return `${origin}/room/${roomId}`;
 }
 
-export function raceInviteMessage(url: string): string {
+export function raceInviteMessage(url: string, config?: RoomConfig): string {
+  const summary = config ? raceConfigSummary(config) : null;
+  if (summary) {
+    return `race me on typing race (${summary}) — ${url}`;
+  }
   return `race me on typing race — ${url}`;
 }
 

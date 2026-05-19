@@ -197,11 +197,13 @@ export class Room extends DurableObject<Env> {
       playerCount: 0,
       spectatorCount: 0,
       createdAt: Date.now(),
+      lobbyExpiresAt: Date.now() + ROOM_EXPIRY_MS,
       _source: body.source,
     };
     await this.persistState();
     await this.trackRoomCreated(this.state);
     await this.upsertActiveRoom("created");
+    await this.rescheduleAlarm();
     return Response.json({ ok: true });
   }
 
@@ -354,6 +356,7 @@ export class Room extends DurableObject<Env> {
         ...this.state,
         status: "ready_check",
         readyCheckUntil: Date.now() + READY_CHECK_MS,
+        lobbyExpiresAt: undefined,
       };
     }
 
@@ -769,6 +772,11 @@ export class Room extends DurableObject<Env> {
       nextStatus = "waiting";
     }
 
+    const lobbyExpiresAt =
+      nextStatus === "waiting" && remainingPlayers > 0
+        ? Date.now() + ROOM_EXPIRY_MS
+        : undefined;
+
     // Mid-race disconnect → start grace countdown on the dropped role.
     let disconnected = this.state.disconnected;
     if (this.state.status === "racing" && remainingPlayers < 2) {
@@ -804,6 +812,8 @@ export class Room extends DurableObject<Env> {
         nextStatus === "waiting"
           ? undefined
           : this.state.readyCheckUntil,
+      lobbyExpiresAt:
+        nextStatus === "waiting" ? lobbyExpiresAt : undefined,
       rematchReady,
       disconnected,
       _expiresAt: expiresAt,
@@ -875,6 +885,9 @@ export class Room extends DurableObject<Env> {
     if (s._expiresAt) {
       candidates.push(s._expiresAt);
     }
+    if (s.status === "waiting" && s.lobbyExpiresAt) {
+      candidates.push(s.lobbyExpiresAt);
+    }
 
     if (candidates.length === 0) {
       await this.ctx.storage.deleteAlarm();
@@ -888,6 +901,32 @@ export class Room extends DurableObject<Env> {
   async alarm(): Promise<void> {
     if (!this.state) return;
     const now = Date.now();
+
+    // Waiting lobby timed out while still open — close live connections.
+    if (
+      this.state.status === "waiting" &&
+      this.state.lobbyExpiresAt !== undefined &&
+      now >= this.state.lobbyExpiresAt
+    ) {
+      const roomId = this.state.roomId;
+      for (const ws of this.ctx.getWebSockets()) {
+        this.safeSend(ws, {
+          t: "error",
+          code: "room_not_found",
+          message: "this room expired while waiting for an opponent",
+        });
+        try {
+          ws.close(4004, "room_expired");
+        } catch {
+          // already closed
+        }
+      }
+      await this.deleteActiveRoom(roomId);
+      this.state = null;
+      await this.ctx.storage.delete("state");
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
 
     // Room expiry takes precedence: if nobody's here and the expiry has
     // fired, wipe the room so future connections see "room_not_found".

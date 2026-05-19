@@ -5,6 +5,12 @@ import { RaceView } from "../components/RaceView";
 import { ReadyCheck } from "../components/ReadyCheck";
 import { SpectatorView } from "../components/SpectatorView";
 import { trackEvent } from "../lib/analytics";
+import type { PublicRoomState, RoomConfig } from "../lib/protocol";
+import {
+  formatCountdownMs,
+  raceConfigSummary,
+  serverNowFromRoom,
+} from "../lib/raceLabels";
 import {
   canNativeShare,
   copyText,
@@ -115,7 +121,7 @@ function RoomSession({ roomId }: { roomId: string }) {
           finish={spectatorFinish}
         />
       ) : roomState.status === "waiting" ? (
-        <WaitingLobby roomId={roomId} />
+        <WaitingLobby roomId={roomId} room={roomState} />
       ) : roomState.status === "ready_check" ? (
         <ReadyCheck room={roomState} role={role} send={send} />
       ) : (
@@ -233,31 +239,44 @@ function StatusScreen({
   );
 }
 
-function WaitingLobby({ roomId }: { roomId: string }) {
+function WaitingLobby({
+  roomId,
+  room,
+}: {
+  roomId: string;
+  room: PublicRoomState;
+}) {
   const shareUrl = roomShareUrl(roomId);
-  const inviteText = raceInviteMessage(shareUrl);
+  const inviteText = raceInviteMessage(shareUrl, room.config);
   const inviteRef = useRef<HTMLTextAreaElement>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [resent, setResent] = useState(false);
   const nativeShare = canNativeShare();
+  const lobbyRemainingMs = useLobbyCountdown(room);
 
   useEffect(() => {
     inviteRef.current?.focus();
     inviteRef.current?.select();
   }, []);
 
-  async function copyInvite() {
+  async function copyInvite(kind: "race" | "resend") {
     if (!(await copyText(inviteText))) {
       inviteRef.current?.focus();
       inviteRef.current?.select();
       return;
     }
-    setInviteCopied(true);
+    if (kind === "resend") {
+      setResent(true);
+      window.setTimeout(() => setResent(false), 1500);
+    } else {
+      setInviteCopied(true);
+      window.setTimeout(() => setInviteCopied(false), 1500);
+    }
     trackEvent("invite_copied", {
       roomId,
-      metadata: { kind: "race" },
+      metadata: { kind },
     });
-    window.setTimeout(() => setInviteCopied(false), 1500);
   }
 
   async function copyLink() {
@@ -294,6 +313,10 @@ function WaitingLobby({ roomId }: { roomId: string }) {
           </span>
         </div>
         <h2 className="text-2xl mt-2">invite a friend</h2>
+        <RaceConfigBadges config={room.config} />
+        {lobbyRemainingMs !== null && (
+          <LobbyExpiryCountdown remainingMs={lobbyRemainingMs} />
+        )}
       </div>
 
       <div className="flex flex-col gap-4 w-full">
@@ -306,9 +329,9 @@ function WaitingLobby({ roomId }: { roomId: string }) {
           className="w-full resize-none bg-bg-soft border border-border px-4 py-3 text-fg text-sm leading-relaxed focus:outline-none focus:border-accent selection:bg-accent/30"
         />
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center">
           <button
-            onClick={copyInvite}
+            onClick={() => copyInvite("race")}
             className={
               "px-6 py-3 border text-sm transition-colors " +
               (inviteCopied
@@ -317,6 +340,17 @@ function WaitingLobby({ roomId }: { roomId: string }) {
             }
           >
             {inviteCopied ? "invite copied" : "copy invite"}
+          </button>
+          <button
+            onClick={() => copyInvite("resend")}
+            className={
+              "px-6 py-3 border text-sm transition-colors " +
+              (resent
+                ? "border-ok text-ok"
+                : "border-border text-fg-dim hover:border-accent hover:text-accent")
+            }
+          >
+            {resent ? "sent again" : "send invite again"}
           </button>
           {nativeShare && (
             <button
@@ -363,5 +397,78 @@ function WaitingLobby({ roomId }: { roomId: string }) {
         ← cancel
       </Link>
     </div>
+  );
+}
+
+function useLobbyCountdown(room: PublicRoomState): number | null {
+  const [remainingMs, setRemainingMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (room.status !== "waiting" || room.lobbyExpiresAt === undefined) {
+      setRemainingMs(null);
+      return;
+    }
+
+    const tick = () => {
+      const now = serverNowFromRoom(room);
+      setRemainingMs(Math.max(0, room.lobbyExpiresAt! - now));
+    };
+
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [room.status, room.lobbyExpiresAt, room.serverOffsetMs]);
+
+  return remainingMs;
+}
+
+function RaceConfigBadges({ config }: { config: RoomConfig }) {
+  const summary = raceConfigSummary(config);
+  const [length, mode] = summary.split(" · ");
+
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+      <ConfigBadge label={length} tone="accent" />
+      <ConfigBadge label={mode} tone="muted" />
+    </div>
+  );
+}
+
+function ConfigBadge({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "accent" | "muted";
+}) {
+  const classes =
+    tone === "accent"
+      ? "border-accent/50 text-accent"
+      : "border-border text-fg-dim";
+  return (
+    <span
+      className={
+        `border px-2 py-0.5 text-[0.62rem] uppercase tracking-[0.16em] ${classes}`
+      }
+    >
+      {label}
+    </span>
+  );
+}
+
+function LobbyExpiryCountdown({ remainingMs }: { remainingMs: number }) {
+  const urgent = remainingMs < 60_000;
+  return (
+    <p
+      className={
+        "text-xs tabular-nums " +
+        (urgent ? "text-opponent" : "text-fg-dimmer")
+      }
+    >
+      invite window closes in{" "}
+      <span className={urgent ? "text-opponent" : "text-fg-dim"}>
+        {formatCountdownMs(remainingMs)}
+      </span>
+    </p>
   );
 }

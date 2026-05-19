@@ -2,7 +2,7 @@
 
 ## Near Term
 
-- Reduce dead waiting rooms: show expiry countdown, resend invite nudge, and passage/mode reminder on the lobby.
+- Add a PNG social preview image (Discord often ignores SVG `og:image`).
 
 ## Later
 
