@@ -5,6 +5,14 @@ import { RaceView } from "../components/RaceView";
 import { ReadyCheck } from "../components/ReadyCheck";
 import { SpectatorView } from "../components/SpectatorView";
 import { trackEvent } from "../lib/analytics";
+import {
+  canNativeShare,
+  copyText,
+  nativeShareInvite,
+  raceInviteMessage,
+  roomShareUrl,
+  watchInviteMessage,
+} from "../lib/share";
 
 export function Room() {
   const params = useParams<{ id: string }>();
@@ -128,19 +136,17 @@ function RoomSession({ roomId }: { roomId: string }) {
 
 function WatchLinkButton({ roomId }: { roomId: string }) {
   const [copied, setCopied] = useState(false);
-  const shareUrl =
-    typeof window === "undefined"
-      ? ""
-      : `${window.location.origin}/room/${roomId}`;
+  const shareUrl = roomShareUrl(roomId);
+  const inviteText = watchInviteMessage(shareUrl);
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-    }
+    if (!(await copyText(inviteText))) return;
+    setCopied(true);
+    trackEvent("invite_copied", {
+      roomId,
+      metadata: { kind: "watch" },
+    });
+    window.setTimeout(() => setCopied(false), 1500);
   }
 
   return (
@@ -149,7 +155,7 @@ function WatchLinkButton({ roomId }: { roomId: string }) {
         onClick={copy}
         className="px-3 py-1.5 border border-border text-[0.7rem] uppercase tracking-[0.15em] text-fg-dim hover:border-accent hover:text-accent transition-colors"
       >
-        {copied ? "watch link copied" : "copy spectator link"}
+        {copied ? "watch invite copied" : "copy watch invite"}
       </button>
       <span className="text-[0.68rem] text-fg-dimmer">
         same room link. extra visitors watch live without joining the race.
@@ -228,26 +234,53 @@ function StatusScreen({
 }
 
 function WaitingLobby({ roomId }: { roomId: string }) {
-  const shareUrl =
-    typeof window === "undefined"
-      ? ""
-      : `${window.location.origin}/room/${roomId}`;
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [copied, setCopied] = useState(false);
+  const shareUrl = roomShareUrl(roomId);
+  const inviteText = raceInviteMessage(shareUrl);
+  const inviteRef = useRef<HTMLTextAreaElement>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const nativeShare = canNativeShare();
 
   useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
+    inviteRef.current?.focus();
+    inviteRef.current?.select();
   }, []);
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      inputRef.current?.focus();
-      inputRef.current?.select();
+  async function copyInvite() {
+    if (!(await copyText(inviteText))) {
+      inviteRef.current?.focus();
+      inviteRef.current?.select();
+      return;
+    }
+    setInviteCopied(true);
+    trackEvent("invite_copied", {
+      roomId,
+      metadata: { kind: "race" },
+    });
+    window.setTimeout(() => setInviteCopied(false), 1500);
+  }
+
+  async function copyLink() {
+    if (!(await copyText(shareUrl))) return;
+    setLinkCopied(true);
+    trackEvent("invite_copied", {
+      roomId,
+      metadata: { kind: "link" },
+    });
+    window.setTimeout(() => setLinkCopied(false), 1500);
+  }
+
+  async function shareInvite() {
+    const result = await nativeShareInvite({
+      title: "typing race",
+      text: inviteText,
+      url: shareUrl,
+    });
+    if (result === "shared") {
+      trackEvent("invite_shared", {
+        roomId,
+        metadata: { kind: "race" },
+      });
     }
   }
 
@@ -260,34 +293,67 @@ function WaitingLobby({ roomId }: { roomId: string }) {
             waiting for opponent
           </span>
         </div>
-        <h2 className="text-2xl mt-2">send this room link</h2>
+        <h2 className="text-2xl mt-2">invite a friend</h2>
       </div>
 
-      <div className="flex flex-col gap-2 w-full">
-        <div className="flex gap-2 w-full">
-          <input
-            ref={inputRef}
-            readOnly
-            value={shareUrl}
-            onClick={(e) => e.currentTarget.select()}
-            className="flex-1 bg-bg-soft border border-border px-4 py-3 text-fg text-sm font-mono focus:outline-none focus:border-accent selection:bg-accent/30"
-          />
+      <div className="flex flex-col gap-4 w-full">
+        <textarea
+          ref={inviteRef}
+          readOnly
+          rows={2}
+          value={inviteText}
+          onClick={(e) => e.currentTarget.select()}
+          className="w-full resize-none bg-bg-soft border border-border px-4 py-3 text-fg text-sm leading-relaxed focus:outline-none focus:border-accent selection:bg-accent/30"
+        />
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
           <button
-            onClick={copy}
+            onClick={copyInvite}
             className={
-              "px-5 py-3 border text-sm transition-colors " +
-              (copied
+              "px-6 py-3 border text-sm transition-colors " +
+              (inviteCopied
                 ? "border-ok text-ok"
-                : "border-border text-fg-dim hover:border-accent hover:text-accent")
+                : "border-accent text-accent hover:bg-accent hover:text-bg")
             }
           >
-            {copied ? "copied" : "copy"}
+            {inviteCopied ? "invite copied" : "copy invite"}
           </button>
+          {nativeShare && (
+            <button
+              onClick={shareInvite}
+              className="px-6 py-3 border border-border text-sm text-fg-dim hover:border-accent hover:text-accent transition-colors"
+            >
+              share
+            </button>
+          )}
         </div>
-        <span className="text-xs text-fg-dimmer">
-          first friend to open it races you. after two racers are in, the
-          same link becomes a live spectator view for everyone else.
-        </span>
+
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2 w-full">
+            <input
+              readOnly
+              value={shareUrl}
+              onClick={(e) => e.currentTarget.select()}
+              className="flex-1 bg-bg-soft/60 border border-border px-3 py-2 text-fg-dim text-xs font-mono focus:outline-none focus:border-accent selection:bg-accent/30"
+            />
+            <button
+              onClick={copyLink}
+              className={
+                "shrink-0 px-4 py-2 border text-xs transition-colors " +
+                (linkCopied
+                  ? "border-ok text-ok"
+                  : "border-border text-fg-dim hover:border-accent hover:text-accent")
+              }
+            >
+              {linkCopied ? "copied" : "copy link"}
+            </button>
+          </div>
+          <span className="text-xs text-fg-dimmer text-left sm:text-center">
+            paste the invite into discord, imessage, or reddit. first friend to
+            open it races you. after two racers join, the same link is a live
+            spectator view.
+          </span>
+        </div>
       </div>
 
       <Link
@@ -299,4 +365,3 @@ function WaitingLobby({ roomId }: { roomId: string }) {
     </div>
   );
 }
-

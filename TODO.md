@@ -2,9 +2,7 @@
 
 ## Near Term
 
-- Polish one-word mode results. Replace the WPM-over-time graph for one-word races with a sprint result card showing milliseconds, accuracy, and winner margin.
-- Make Recent more interesting. Add passage and mode badges such as `word`, `short`, `time`, and `finish`, and highlight close races so the page feels more like social proof than a raw log.
-- Add share text. After creating a room, provide a `copy invite` action that copies text like `race me: <link>` for easier sharing in Reddit, Discord, and group chats.
+- Reduce dead waiting rooms: show expiry countdown, resend invite nudge, and passage/mode reminder on the lobby.
 
 ## Later
 

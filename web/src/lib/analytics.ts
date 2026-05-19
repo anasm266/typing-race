@@ -6,7 +6,9 @@ export type ClientAnalyticsEventName =
   | "practice_started"
   | "practice_completed"
   | "room_opened"
-  | "room_result_viewed";
+  | "room_result_viewed"
+  | "invite_copied"
+  | "invite_shared";
 
 interface AnalyticsEvent {
   event: ClientAnalyticsEventName;

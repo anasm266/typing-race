@@ -16,6 +16,8 @@ export type AnalyticsEventName =
   | "practice_completed"
   | "room_opened"
   | "room_result_viewed"
+  | "invite_copied"
+  | "invite_shared"
   | "room_created"
   | "player_joined"
   | "spectator_joined"
@@ -83,6 +85,8 @@ const CLIENT_EVENT_NAMES = new Set<AnalyticsEventName>([
   "practice_completed",
   "room_opened",
   "room_result_viewed",
+  "invite_copied",
+  "invite_shared",
 ]);
 
 const METADATA_MAX_BYTES = 1200;
