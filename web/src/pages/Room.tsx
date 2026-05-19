@@ -251,7 +251,6 @@ function WaitingLobby({
   const inviteRef = useRef<HTMLTextAreaElement>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [resent, setResent] = useState(false);
   const nativeShare = canNativeShare();
   const lobbyRemainingMs = useLobbyCountdown(room);
 
@@ -260,23 +259,18 @@ function WaitingLobby({
     inviteRef.current?.select();
   }, []);
 
-  async function copyInvite(kind: "race" | "resend") {
+  async function copyInvite() {
     if (!(await copyText(inviteText))) {
       inviteRef.current?.focus();
       inviteRef.current?.select();
       return;
     }
-    if (kind === "resend") {
-      setResent(true);
-      window.setTimeout(() => setResent(false), 1500);
-    } else {
-      setInviteCopied(true);
-      window.setTimeout(() => setInviteCopied(false), 1500);
-    }
+    setInviteCopied(true);
     trackEvent("invite_copied", {
       roomId,
-      metadata: { kind },
+      metadata: { kind: "race" },
     });
+    window.setTimeout(() => setInviteCopied(false), 1500);
   }
 
   async function copyLink() {
@@ -331,7 +325,7 @@ function WaitingLobby({
 
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center">
           <button
-            onClick={() => copyInvite("race")}
+            onClick={copyInvite}
             className={
               "px-6 py-3 border text-sm transition-colors " +
               (inviteCopied
@@ -340,17 +334,6 @@ function WaitingLobby({
             }
           >
             {inviteCopied ? "invite copied" : "copy invite"}
-          </button>
-          <button
-            onClick={() => copyInvite("resend")}
-            className={
-              "px-6 py-3 border text-sm transition-colors " +
-              (resent
-                ? "border-ok text-ok"
-                : "border-border text-fg-dim hover:border-accent hover:text-accent")
-            }
-          >
-            {resent ? "sent again" : "send invite again"}
           </button>
           {nativeShare && (
             <button
