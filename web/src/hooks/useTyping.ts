@@ -28,6 +28,51 @@ function ctrlBackspaceTarget(
   return pos;
 }
 
+function isWhitespace(ch: string | undefined): boolean {
+  return ch !== undefined && /\s/.test(ch);
+}
+
+function currentWordBounds(
+  passage: string,
+  pos: number
+): { start: number; end: number } {
+  let start = pos;
+  while (start > 0 && !isWhitespace(passage[start - 1])) start--;
+
+  let end = pos;
+  while (end < passage.length && !isWhitespace(passage[end])) end++;
+
+  return { start, end };
+}
+
+function nextWordStart(passage: string, pos: number): number | null {
+  let next = pos;
+  while (next < passage.length && isWhitespace(passage[next])) next++;
+  return next < passage.length ? next : null;
+}
+
+function typedAfterSpace(typed: string, passage: string): string | null {
+  const pos = typed.length;
+  if (pos >= passage.length) return null;
+
+  if (isWhitespace(passage[pos])) {
+    return typed + passage[pos];
+  }
+
+  const { start, end } = currentWordBounds(passage, pos);
+  if (pos === start) return null;
+
+  const nextStart = nextWordStart(passage, end);
+  if (nextStart === null) return null;
+
+  let suffix = "";
+  for (let i = pos; i < nextStart; i++) {
+    suffix += i < end ? " " : passage[i];
+  }
+
+  return typed + suffix;
+}
+
 function countCorrectChars(typed: string, passage: string): number {
   let correct = 0;
   for (let i = 0; i < typed.length; i++) {
@@ -150,18 +195,25 @@ function typingReducer(
       if (state.endedAt !== null) return state;
       if (state.typed.length >= action.passage.length) return state;
 
+      const nextTyped =
+        action.key === " "
+          ? typedAfterSpace(state.typed, action.passage)
+          : state.typed + action.key;
+
+      if (nextTyped === null) return state;
+
       const manualStartedAt =
         action.startAtOverride === undefined &&
         state.manualStartedAt === null
           ? action.now
           : state.manualStartedAt;
-      const nextTyped = state.typed + action.key;
+      const committedChars = nextTyped.length - state.typed.length;
 
       return {
         ...state,
         typed: nextTyped,
         manualStartedAt,
-        totalKeystrokes: state.totalKeystrokes + 1,
+        totalKeystrokes: state.totalKeystrokes + committedChars,
         endedAt:
           nextTyped.length >= action.passage.length
             ? action.now
