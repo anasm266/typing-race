@@ -11,7 +11,6 @@ import {
   canNativeShare,
   copyText,
   nativeShareInvite,
-  raceInviteMessage,
   roomShareUrl,
   watchInviteMessage,
 } from "../lib/share";
@@ -243,10 +242,9 @@ function WaitingLobby({
   room: PublicRoomState;
 }) {
   const shareUrl = roomShareUrl(roomId);
-  const inviteText = raceInviteMessage(shareUrl, room.config);
+  const inviteText = shareUrl;
   const inviteRef = useRef<HTMLTextAreaElement>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
   const nativeShare = canNativeShare();
 
   useEffect(() => {
@@ -268,20 +266,10 @@ function WaitingLobby({
     window.setTimeout(() => setInviteCopied(false), 1500);
   }
 
-  async function copyLink() {
-    if (!(await copyText(shareUrl))) return;
-    setLinkCopied(true);
-    trackEvent("invite_copied", {
-      roomId,
-      metadata: { kind: "link" },
-    });
-    window.setTimeout(() => setLinkCopied(false), 1500);
-  }
-
   async function shareInvite() {
     const result = await nativeShareInvite({
       title: "typing race",
-      text: inviteText,
+      text: shareUrl,
       url: shareUrl,
     });
     if (result === "shared") {
@@ -344,25 +332,6 @@ function WaitingLobby({
         </div>
 
         <div className="flex flex-col gap-2">
-          <div className="flex gap-2 w-full">
-            <input
-              readOnly
-              value={shareUrl}
-              onClick={(e) => e.currentTarget.select()}
-              className="flex-1 bg-bg-soft/60 border border-border px-3 py-2 text-fg-dim text-xs font-mono focus:outline-none focus:border-accent selection:bg-accent/30"
-            />
-            <button
-              onClick={copyLink}
-              className={
-                "shrink-0 px-4 py-2 border text-xs transition-colors " +
-                (linkCopied
-                  ? "border-ok text-ok"
-                  : "border-border text-fg-dim hover:border-accent hover:text-accent")
-              }
-            >
-              {linkCopied ? "copied" : "copy link"}
-            </button>
-          </div>
           <span className="text-xs text-fg-dimmer text-left sm:text-center">
             paste the invite into discord, imessage, or reddit. first friend to
             open it races you. after two racers join, the same link is a live
