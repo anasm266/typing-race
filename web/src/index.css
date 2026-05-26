@@ -203,6 +203,17 @@ body {
   font-size: 16px;
 }
 
+.invite-link-field {
+  caret-color: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.invite-link-field::selection {
+  color: var(--color-accent);
+  background: transparent;
+}
+
 .passage-char {
   position: relative;
 }

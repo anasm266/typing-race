@@ -243,7 +243,7 @@ function WaitingLobby({
 }) {
   const shareUrl = roomShareUrl(roomId);
   const inviteText = shareUrl;
-  const inviteRef = useRef<HTMLTextAreaElement>(null);
+  const inviteRef = useRef<HTMLInputElement>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const nativeShare = canNativeShare();
 
@@ -300,13 +300,12 @@ function WaitingLobby({
       </div>
 
       <div className="flex flex-col gap-4 w-full">
-        <textarea
+        <input
           ref={inviteRef}
           readOnly
-          rows={2}
           value={inviteText}
           onClick={(e) => e.currentTarget.select()}
-          className="w-full resize-none bg-bg-soft border border-border px-4 py-3 text-fg text-sm leading-relaxed focus:outline-none focus:border-accent selection:bg-accent/30"
+          className="invite-link-field h-12 w-full bg-bg-soft border border-border px-4 text-accent text-sm font-mono focus:outline-none focus:border-accent"
         />
 
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center">
