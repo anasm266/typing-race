@@ -4,8 +4,13 @@ import { useRoom } from "../hooks/useRoom";
 import { RaceView } from "../components/RaceView";
 import { ReadyCheck } from "../components/ReadyCheck";
 import { SpectatorView } from "../components/SpectatorView";
+import { WaitingWarmup } from "../components/WaitingWarmup";
 import { trackEvent } from "../lib/analytics";
-import type { PublicRoomState, RoomConfig } from "../lib/protocol";
+import type {
+  PlayerRole,
+  PublicRoomState,
+  RoomConfig,
+} from "../lib/protocol";
 import { formatCountdownMs, raceConfigSummary } from "../lib/raceLabels";
 import {
   canNativeShare,
@@ -116,7 +121,7 @@ function RoomSession({ roomId }: { roomId: string }) {
           finish={spectatorFinish}
         />
       ) : roomState.status === "waiting" ? (
-        <WaitingLobby roomId={roomId} room={roomState} />
+        <WaitingLobby roomId={roomId} room={roomState} role={role} />
       ) : roomState.status === "ready_check" ? (
         <ReadyCheck room={roomState} role={role} send={send} />
       ) : (
@@ -237,9 +242,11 @@ function StatusScreen({
 function WaitingLobby({
   roomId,
   room,
+  role,
 }: {
   roomId: string;
   room: PublicRoomState;
+  role: PlayerRole | null;
 }) {
   const shareUrl = roomShareUrl(roomId);
   const inviteText = shareUrl;
@@ -337,6 +344,8 @@ function WaitingLobby({
             spectator view.
           </span>
         </div>
+
+        {role === "host" && <WaitingWarmup />}
       </div>
 
       <Link

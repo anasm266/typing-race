@@ -163,6 +163,17 @@ body {
   }
 }
 
+@keyframes warmupIn {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .word-sprint-card {
   animation: sprintCardIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -212,6 +223,10 @@ body {
 .invite-link-field::selection {
   color: var(--color-accent);
   background: transparent;
+}
+
+.waiting-warmup {
+  animation: warmupIn 140ms ease-out both;
 }
 
 .passage-char {
