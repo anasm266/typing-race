@@ -121,8 +121,6 @@ function RaceRow({ race }: { race: RecentRace }) {
         <PlayerCell
           label="host"
           wpm={race.host_wpm}
-          accuracy={race.host_accuracy}
-          finished={race.host_finished === 1}
           winner={hostWon}
           tie={tie}
         />
@@ -130,8 +128,6 @@ function RaceRow({ race }: { race: RecentRace }) {
         <PlayerCell
           label="guest"
           wpm={race.guest_wpm}
-          accuracy={race.guest_accuracy}
-          finished={race.guest_finished === 1}
           winner={guestWon}
           tie={tie}
         />
@@ -152,15 +148,11 @@ function RaceRow({ race }: { race: RecentRace }) {
 
 function PlayerCell({
   wpm,
-  accuracy,
-  finished,
   winner,
   tie,
 }: {
   label: string;
   wpm: number;
-  accuracy: number;
-  finished: boolean;
   winner: boolean;
   tie: boolean;
 }) {
@@ -175,11 +167,6 @@ function PlayerCell({
       <span className="text-[0.6rem] uppercase tracking-[0.15em] text-fg-dimmer">
         wpm
       </span>
-      {!finished && accuracy < 100 && (
-        <span className="text-[0.6rem] text-fg-dimmer ml-1">
-          {Math.round(accuracy)}%
-        </span>
-      )}
     </div>
   );
 }
