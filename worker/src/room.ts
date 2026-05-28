@@ -99,6 +99,7 @@ function zeroProgress(): PlayerProgress {
 
 /** Close code used when the server deliberately replaces a WS for the same role. */
 const SUPERSEDE_CODE = 4001;
+const ROOM_TERMINAL_CODE = 4004;
 const MAX_SPECTATORS = 25;
 const SPECTATOR_FULL_CODE = 4010;
 const PROGRESS_PERSIST_INTERVAL_MS = 2_000;
@@ -223,7 +224,7 @@ export class Room extends DurableObject<Env> {
         code: "room_not_found",
         message: "room not found or expired",
       });
-      server.close(4004, "room_not_found");
+      server.close(ROOM_TERMINAL_CODE, "room_not_found");
       return new Response(null, { status: 101, webSocket: client });
     }
 
@@ -698,9 +699,9 @@ export class Room extends DurableObject<Env> {
     console.log(
       `[room ${this.state?.roomId}] close: code=${code} reason=${reason} clean=${wasClean}`
     );
-    if (code === SUPERSEDE_CODE) {
-      // This ws was replaced by a fresh connection for the same role
-      // (reconnect). Skip the disconnect-grace flow.
+    if (code === SUPERSEDE_CODE || code === ROOM_TERMINAL_CODE) {
+      // Superseded sockets and server-expired/not-found rooms are terminal
+      // server actions. Normal disconnect analytics would race room cleanup.
       return;
     }
     try {
@@ -719,26 +720,29 @@ export class Room extends DurableObject<Env> {
   }
 
   private async handleDisconnect(closing: WebSocket): Promise<void> {
-    if (!this.state) return;
+    const stateBeforeDisconnect = this.state;
+    if (!stateBeforeDisconnect) return;
 
-    const statusBeforeDisconnect = this.state.status;
+    const roomId = stateBeforeDisconnect.roomId;
+    const statusBeforeDisconnect = stateBeforeDisconnect.status;
     const att = normalizeAttachment(closing);
     const remainingPlayers = this.countPlayerSockets(closing);
     const remainingSpectators = this.countSpectatorSockets(closing);
 
     if (att?.kind === "spectator") {
       this.state = {
-        ...this.state,
+        ...stateBeforeDisconnect,
         spectatorCount: remainingSpectators,
         _expiresAt:
           remainingPlayers + remainingSpectators === 0
             ? Date.now() + ROOM_EXPIRY_MS
             : undefined,
       };
+      const nextState = this.state;
       await this.persistState();
       await this.upsertActiveRoom("spectator_left");
       await this.trackSpectatorLeave(
-        this.state.roomId,
+        roomId,
         att.joinedAt,
         Date.now()
       );
@@ -747,27 +751,33 @@ export class Room extends DurableObject<Env> {
         this.withRoomAnalyticsDefaults(att.analytics),
         {
           eventName: "spectator_left",
-          roomId: this.state.roomId,
+          roomId,
           participantKind: "spectator",
           metadata: {
-            spectatorCount: this.state.spectatorCount,
+            spectatorCount: nextState.spectatorCount,
             watchMs: Math.max(0, Date.now() - att.joinedAt),
           },
         }
       );
       await this.rescheduleAlarm();
-      this.broadcastExcept(closing, { t: "state", room: toPublic(this.state) });
+      if (this.state) {
+        this.broadcastExcept(closing, {
+          t: "state",
+          room: toPublic(this.state),
+        });
+      }
       return;
     }
 
     if (att?.kind !== "player") return;
 
     // Rollback a pre-race lobby to waiting.
-    let nextStatus: PublicRoomState["status"] = this.state.status;
+    let nextStatus: PublicRoomState["status"] =
+      stateBeforeDisconnect.status;
     if (
       remainingPlayers < 2 &&
-      (this.state.status === "starting" ||
-        this.state.status === "ready_check")
+      (stateBeforeDisconnect.status === "starting" ||
+        stateBeforeDisconnect.status === "ready_check")
     ) {
       nextStatus = "waiting";
     }
@@ -778,8 +788,8 @@ export class Room extends DurableObject<Env> {
         : undefined;
 
     // Mid-race disconnect → start grace countdown on the dropped role.
-    let disconnected = this.state.disconnected;
-    if (this.state.status === "racing" && remainingPlayers < 2) {
+    let disconnected = stateBeforeDisconnect.disconnected;
+    if (stateBeforeDisconnect.status === "racing" && remainingPlayers < 2) {
       disconnected = {
         role: att.role,
         at: Date.now(),
@@ -788,8 +798,8 @@ export class Room extends DurableObject<Env> {
     }
 
     // Clear rematch readiness for the leaving role.
-    let rematchReady = this.state.rematchReady;
-    if (this.state.status === "ended" && rematchReady) {
+    let rematchReady = stateBeforeDisconnect.rematchReady;
+    if (stateBeforeDisconnect.status === "ended" && rematchReady) {
       const next = { ...rematchReady };
       next[att.role] = false;
       rematchReady = next.host || next.guest ? next : undefined;
@@ -802,22 +812,25 @@ export class Room extends DurableObject<Env> {
         : undefined;
 
     this.state = {
-      ...this.state,
+      ...stateBeforeDisconnect,
       playerCount: remainingPlayers,
       spectatorCount: remainingSpectators,
       status: nextStatus,
       startAt:
-        nextStatus === "waiting" ? undefined : this.state.startAt,
+        nextStatus === "waiting"
+          ? undefined
+          : stateBeforeDisconnect.startAt,
       readyCheckUntil:
         nextStatus === "waiting"
           ? undefined
-          : this.state.readyCheckUntil,
+          : stateBeforeDisconnect.readyCheckUntil,
       lobbyExpiresAt:
         nextStatus === "waiting" ? lobbyExpiresAt : undefined,
       rematchReady,
       disconnected,
       _expiresAt: expiresAt,
     };
+    const nextState = this.state;
     await this.persistState();
     await this.upsertActiveRoom("player_left");
     if (
@@ -825,24 +838,25 @@ export class Room extends DurableObject<Env> {
         statusBeforeDisconnect === "ready_check" ||
         statusBeforeDisconnect === "starting")
     ) {
-      await this.trackPreStartDrop(this.state.roomId, att.role);
+      await this.trackPreStartDrop(roomId, att.role);
     }
     await safeInsertAnalyticsEvent(
       this.env,
       this.withRoomAnalyticsDefaults(att.analytics),
       {
         eventName: "player_left",
-        roomId: this.state.roomId,
+        roomId,
         participantKind: "player",
         playerRole: att.role,
         metadata: {
           statusBeforeDisconnect,
-          playerCount: this.state.playerCount,
+          playerCount: nextState.playerCount,
         },
       }
     );
     await this.rescheduleAlarm();
 
+    if (!this.state) return;
     for (const other of this.ctx.getWebSockets()) {
       if (other === closing) continue;
       this.safeSend(other, {
@@ -916,7 +930,7 @@ export class Room extends DurableObject<Env> {
           message: "this room expired while waiting for an opponent",
         });
         try {
-          ws.close(4004, "room_expired");
+          ws.close(ROOM_TERMINAL_CODE, "room_expired");
         } catch {
           // already closed
         }
