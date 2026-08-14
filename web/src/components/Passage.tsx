@@ -6,14 +6,26 @@ import {
 } from "react";
 import type { RefObject } from "react";
 
+/** A rival caret to draw over the passage. */
+export interface PassageCursor {
+  seat: number;
+  pos: number;
+  /** CSS color, from the seat theme. */
+  color: string;
+  /** Short tag rendered above the caret, e.g. "P3". */
+  label: string;
+}
+
 interface PassageProps {
   passage: string;
   typed: string;
-  /** Opponent's current typed position. -1 / undefined = don't render. */
-  opponentPos?: number;
-  playerOnePos?: number;
-  playerTwoPos?: number;
+  /** Other racers' positions. */
+  cursors?: PassageCursor[];
+  /** Draw the viewer's own caret at the end of `typed`. */
   showCursor?: boolean;
+  selfColor?: string;
+  /** Label rival carets. Off for two-player races, where color is enough. */
+  showTags?: boolean;
 }
 
 interface Token {
@@ -42,32 +54,28 @@ function tokenize(text: string): Token[] {
 export function Passage({
   passage,
   typed,
-  opponentPos,
-  playerOnePos,
-  playerTwoPos,
+  cursors = [],
   showCursor = true,
+  selfColor = "var(--color-accent)",
+  showTags = false,
 }: PassageProps) {
   const tokens = useMemo(() => tokenize(passage), [passage]);
   const containerRef = useRef<HTMLDivElement>(null);
   const charRefs = useRef<Array<HTMLSpanElement | null>>([]);
-  const cursors = usePassageCursors({
+
+  const placed = usePassageCursors({
     passage,
-    showCursor,
-    selfPos: typed.length,
-    opponentPos,
-    playerOnePos,
-    playerTwoPos,
+    selfPos: showCursor ? typed.length : null,
+    cursors,
     containerRef,
     charRefs,
   });
 
-  return (
-    <div
-      ref={containerRef}
-      className="relative font-mono text-[clamp(1.1rem,2.2vw,1.5rem)] leading-[2] tracking-wide text-fg-dim max-w-[800px] w-full select-none"
-      aria-label="race passage"
-    >
-      {tokens.map((token) => {
+  // Characters only depend on what the viewer typed, so rival carets
+  // moving doesn't re-render hundreds of spans.
+  const body = useMemo(
+    () =>
+      tokens.map((token) => {
         if (token.type === "space") {
           return token.text.split("").map((ch, idx) => {
             const globalIdx = token.start + idx;
@@ -77,7 +85,6 @@ export function Passage({
                 ch={ch}
                 globalIdx={globalIdx}
                 typed={typed}
-                showCursor={showCursor}
                 setRef={(node) => {
                   charRefs.current[globalIdx] = node;
                 }}
@@ -98,7 +105,6 @@ export function Passage({
                   ch={ch}
                   globalIdx={globalIdx}
                   typed={typed}
-                  showCursor={showCursor}
                   setRef={(node) => {
                     charRefs.current[globalIdx] = node;
                   }}
@@ -107,17 +113,26 @@ export function Passage({
             })}
           </span>
         );
-      })}
-      {cursors.self && <SmoothCursor kind="self" cursor={cursors.self} />}
-      {cursors.opponent && (
-        <SmoothCursor kind="opponent" cursor={cursors.opponent} />
-      )}
-      {cursors.playerOne && (
-        <SmoothCursor kind="playerOne" cursor={cursors.playerOne} />
-      )}
-      {cursors.playerTwo && (
-        <SmoothCursor kind="playerTwo" cursor={cursors.playerTwo} />
-      )}
+      }),
+    [tokens, typed]
+  );
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative font-mono text-[clamp(1.1rem,2.2vw,1.5rem)] leading-[2] tracking-wide text-fg-dim max-w-[800px] w-full select-none"
+      aria-label="race passage"
+    >
+      {body}
+      {placed.map((cursor) => (
+        <SmoothCursor
+          key={cursor.seat}
+          cursor={cursor}
+          color={cursor.seat === SELF_SEAT ? selfColor : cursor.color}
+          isSelf={cursor.seat === SELF_SEAT}
+          showTag={showTags && cursor.seat !== SELF_SEAT}
+        />
+      ))}
     </div>
   );
 }
@@ -126,21 +141,13 @@ interface CharProps {
   ch: string;
   globalIdx: number;
   typed: string;
-  showCursor: boolean;
   setRef: (node: HTMLSpanElement | null) => void;
 }
 
-function Char({
-  ch,
-  globalIdx,
-  typed,
-  showCursor,
-  setRef,
-}: CharProps) {
+function Char({ ch, globalIdx, typed, setRef }: CharProps) {
   const isTyped = globalIdx < typed.length;
   const isCorrect = isTyped && typed[globalIdx] === ch;
   const isWrong = isTyped && !isCorrect;
-  const isCursor = showCursor && globalIdx === typed.length;
 
   return (
     <span
@@ -148,7 +155,7 @@ function Char({
       className={
         "passage-char " +
         (isCorrect ? "text-fg" : "") +
-        (!isTyped && !isCursor ? "text-fg-dim" : "")
+        (!isTyped ? "text-fg-dim" : "")
       }
       data-wrong={isWrong ? "true" : undefined}
     >
@@ -157,7 +164,14 @@ function Char({
   );
 }
 
-interface CursorPosition {
+const SELF_SEAT = -1;
+/** Horizontal nudge applied to carets that land on the same character. */
+const STACK_OFFSET_PX = 3;
+
+interface PlacedCursor {
+  seat: number;
+  color: string;
+  label: string;
   x: number;
   y: number;
   height: number;
@@ -165,56 +179,67 @@ interface CursorPosition {
 
 interface CursorInput {
   passage: string;
-  showCursor: boolean;
-  selfPos: number;
-  opponentPos?: number;
-  playerOnePos?: number;
-  playerTwoPos?: number;
+  selfPos: number | null;
+  cursors: PassageCursor[];
   containerRef: RefObject<HTMLDivElement | null>;
   charRefs: RefObject<Array<HTMLSpanElement | null>>;
 }
 
 function usePassageCursors({
   passage,
-  showCursor,
   selfPos,
-  opponentPos,
-  playerOnePos,
-  playerTwoPos,
+  cursors,
   containerRef,
   charRefs,
-}: CursorInput) {
-  const [cursors, setCursors] = useState<{
-    self?: CursorPosition;
-    opponent?: CursorPosition;
-    playerOne?: CursorPosition;
-    playerTwo?: CursorPosition;
-  }>({});
+}: CursorInput): PlacedCursor[] {
+  const [placed, setPlaced] = useState<PlacedCursor[]>([]);
+
+  // Re-measure only when a caret actually moves, not on every render.
+  const signature = cursors
+    .map((c) => `${c.seat}:${c.pos}:${c.color}:${c.label}`)
+    .join("|");
 
   useLayoutEffect(() => {
     function measure() {
       const container = containerRef.current;
       if (!container) return;
       const containerRect = container.getBoundingClientRect();
-      const next = {
-        self:
-          showCursor && selfPos <= passage.length
-            ? cursorForIndex(selfPos, containerRect, charRefs.current)
-            : undefined,
-        opponent:
-          opponentPos !== undefined
-            ? cursorForIndex(opponentPos, containerRect, charRefs.current)
-            : undefined,
-        playerOne:
-          playerOnePos !== undefined
-            ? cursorForIndex(playerOnePos, containerRect, charRefs.current)
-            : undefined,
-        playerTwo:
-          playerTwoPos !== undefined
-            ? cursorForIndex(playerTwoPos, containerRect, charRefs.current)
-            : undefined,
-      };
-      setCursors(next);
+
+      const wanted: Array<{ seat: number; pos: number; color: string; label: string }> =
+        [];
+      for (const cursor of cursors) {
+        wanted.push(cursor);
+      }
+      if (selfPos !== null && selfPos <= passage.length) {
+        wanted.push({
+          seat: SELF_SEAT,
+          pos: selfPos,
+          color: "",
+          label: "you",
+        });
+      }
+
+      const next: PlacedCursor[] = [];
+      for (const cursor of wanted) {
+        const position = cursorForIndex(
+          cursor.pos,
+          containerRect,
+          charRefs.current ?? []
+        );
+        if (!position) continue;
+        next.push({ ...cursor, ...position });
+      }
+
+      // Carets sharing a character fan out instead of stacking into a blur.
+      const columns = new Map<string, number>();
+      for (const cursor of next) {
+        const key = `${Math.round(cursor.x)}:${Math.round(cursor.y)}`;
+        const taken = columns.get(key) ?? 0;
+        cursor.x += taken * STACK_OFFSET_PX;
+        columns.set(key, taken + 1);
+      }
+
+      setPlaced(next);
     }
 
     measure();
@@ -224,25 +249,17 @@ function usePassageCursors({
     const observer = new ResizeObserver(measure);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [
-    passage,
-    showCursor,
-    selfPos,
-    opponentPos,
-    playerOnePos,
-    playerTwoPos,
-    containerRef,
-    charRefs,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [passage, selfPos, signature, containerRef, charRefs]);
 
-  return cursors;
+  return placed;
 }
 
 function cursorForIndex(
   index: number,
   containerRect: DOMRect,
   refs: Array<HTMLSpanElement | null>
-): CursorPosition | undefined {
+): { x: number; y: number; height: number } | undefined {
   const bounded = Math.max(0, Math.min(index, refs.length));
   const target = refs[bounded] ?? refs[refs.length - 1];
   if (!target) return undefined;
@@ -257,21 +274,48 @@ function cursorForIndex(
 }
 
 function SmoothCursor({
-  kind,
   cursor,
+  color,
+  isSelf,
+  showTag,
 }: {
-  kind: "self" | "opponent" | "playerOne" | "playerTwo";
-  cursor: CursorPosition;
+  cursor: PlacedCursor;
+  color: string;
+  isSelf: boolean;
+  showTag: boolean;
 }) {
+  const transform = `translate3d(${cursor.x - 1}px, ${
+    cursor.y + cursor.height * 0.08
+  }px, 0)`;
+
   return (
-    <span
-      className={`smooth-caret smooth-caret-${kind}`}
-      style={{
-        height: `${cursor.height * 0.84}px`,
-        transform: `translate3d(${cursor.x - 1}px, ${
-          cursor.y + cursor.height * 0.08
-        }px, 0)`,
-      }}
-    />
+    <>
+      <span
+        className="smooth-caret"
+        data-self={isSelf ? "true" : "false"}
+        style={
+          {
+            height: `${cursor.height * 0.84}px`,
+            transform,
+            "--caret-color": color,
+          } as React.CSSProperties
+        }
+      />
+      {showTag && (
+        <span
+          className="caret-tag"
+          style={
+            {
+              transform: `translate3d(${cursor.x - 1}px, ${
+                cursor.y - cursor.height * 0.18
+              }px, 0)`,
+              "--caret-color": color,
+            } as React.CSSProperties
+          }
+        >
+          {cursor.label}
+        </span>
+      )}
+    </>
   );
 }

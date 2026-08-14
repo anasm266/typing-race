@@ -149,7 +149,9 @@ function HistoryRow({ entry }: { entry: LocalHistoryEntry }) {
               <span className="text-fg-dimmer">vs</span>
               <Metric
                 value={entry.opponentWpm.toString()}
-                label="rival wpm"
+                label={
+                  (entry.playerCount ?? 2) > 2 ? "best rival" : "rival wpm"
+                }
                 tone="opponent"
               />
             </>
@@ -163,6 +165,13 @@ function HistoryRow({ entry }: { entry: LocalHistoryEntry }) {
             {entry.outcome}
           </span>
         )}
+        {isRace &&
+          entry.place !== undefined &&
+          (entry.playerCount ?? 2) > 2 && (
+            <span className="text-fg-dimmer">
+              {entry.place} of {entry.playerCount}
+            </span>
+          )}
         <span>{entry.passageWords} words</span>
         <span className="text-fg-dimmer">
           {formatClock(entry.finishedAt)}

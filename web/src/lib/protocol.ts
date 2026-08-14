@@ -8,13 +8,26 @@ export type EndMode = "finish" | "time";
 export type TimeLimit = 30 | 60 | 90;
 export type RoomSource = "user" | "load_test";
 
-export type PlayerRole = "host" | "guest";
+/**
+ * Seat index within a room, 0-based. Seat 0 is always the room creator
+ * (the host) and is the only seat allowed to force-start a race early.
+ */
+export type Seat = number;
+
+export type MaxPlayers = 2 | 3 | 4;
 export type ParticipantKind = "player" | "spectator";
+
+/** A race needs at least this many racers before it can start. */
+export const MIN_PLAYERS = 2;
+/** Hard ceiling on seats, independent of a room's configured maxPlayers. */
+export const MAX_PLAYERS = 4;
+export const HOST_SEAT = 0;
 
 export interface RoomConfig {
   endMode: EndMode;
   passageLength: PassageLength;
   timeLimit: TimeLimit;
+  maxPlayers: MaxPlayers;
 }
 
 export interface PassageInfo {
@@ -30,48 +43,61 @@ export type RoomStatus =
   | "racing"
   | "ended";
 
-export type RaceOutcome = "host_wins" | "guest_wins" | "tie";
-export type EndReason = "finish" | "time_up" | "disconnect";
+/**
+ * - finish:     finish mode resolved (everyone done, or the grace expired)
+ * - time_up:    time mode clock ran out
+ * - disconnect: fewer than MIN_PLAYERS were still connected
+ * - cap:        hard duration backstop fired (see raceCapMs)
+ */
+export type EndReason = "finish" | "time_up" | "disconnect" | "cap";
 
-/** Per-role disconnect grace info while racing. */
-export interface DisconnectInfo {
-  role: PlayerRole;
-  at: number;
-  graceUntil: number;
+/** Roster entry. Live typing progress travels via player_progress instead. */
+export interface PlayerSlot {
+  seat: Seat;
+  isHost: boolean;
+  connected: boolean;
+  /**
+   * Set when a racer drops mid-race. Their seat and progress are held so
+   * they can reconnect with the same session token and carry on; the race
+   * keeps running for everyone else.
+   */
+  droppedAt?: number;
+  /** Locked in during ready_check, or requested a rematch while ended. */
+  ready: boolean;
+  finished: boolean;
 }
 
 /**
- * Finish-mode grace: the first player crossed the line, the race is
- * still running so the other can complete too, but a timer is now
- * ticking. When it expires, the race ends with the first finisher
- * as the winner.
+ * Finish-mode grace: the first racer crossed the line, the race is still
+ * running so the others can complete too, but a timer is now ticking.
+ * When it expires the race is scored wherever everyone else stands.
  */
 export interface FinishGraceInfo {
-  firstFinisher: PlayerRole;
+  firstFinisherSeat: Seat;
   at: number;
   graceUntil: number;
 }
 
 export interface PlayerResult {
-  role: PlayerRole;
+  seat: Seat;
   wpm: number;
   accuracy: number;
   elapsedMs: number;
   pos: number;
   correctCount: number;
   finishedPassage: boolean;
+  /** 1-based finishing position. Tied racers share a place. */
+  place: number;
+  /** Dropped before the race ended and never came back. */
+  dnf: boolean;
 }
 
 export interface RaceResult {
-  outcome: RaceOutcome;
   endReason: EndReason;
-  host: PlayerResult;
-  guest: PlayerResult;
-}
-
-export interface RematchReady {
-  host: boolean;
-  guest: boolean;
+  /** Sorted by place ascending. */
+  players: PlayerResult[];
+  /** null when the top place is shared. */
+  winnerSeat: Seat | null;
 }
 
 export interface PublicRoomState {
@@ -79,37 +105,38 @@ export interface PublicRoomState {
   passage: PassageInfo;
   config: RoomConfig;
   status: RoomStatus;
+  players: PlayerSlot[];
+  /** Count of seats currently held (including held seats of dropped racers). */
   playerCount: number;
+  /** Count of seats with a live socket right now. */
+  connectedCount: number;
   spectatorCount: number;
   createdAt: number;
   /**
    * While status === "waiting", ms timestamp after which the room is
-   * closed if a second player has not joined.
+   * closed if it never reaches MIN_PLAYERS.
    */
   lobbyExpiresAt?: number;
   /** Server timestamp included with each state broadcast for clock sync. */
   serverNow?: number;
-  /** Client-derived server clock offset, populated by useRoom. */
+  /** Client-derived server clock offset, populated by web/useRoom. */
   serverOffsetMs?: number;
   /**
    * While status === "ready_check", the ms timestamp at which the race
-   * auto-starts if the guest hasn't clicked lock-in yet.
+   * auto-starts even if somebody hasn't locked in.
    */
   readyCheckUntil?: number;
-  /** ms timestamp when racing begins (server clock). Set after ready_check resolves. */
+  /** ms timestamp when racing begins (server clock). */
   startAt?: number;
-  /** ms timestamp when race ends in time-mode (startAt + timeLimit*1000). */
+  /** ms timestamp when the race ends in time mode. */
   endAt?: number;
+  /** Backstop deadline so a race can never hang open forever. */
+  hardEndAt?: number;
   /** Final result, set when status transitions to "ended". */
   result?: RaceResult;
-  /** Per-role rematch readiness, only populated while status === "ended". */
-  rematchReady?: RematchReady;
-  /** Set while a player is disconnected mid-race and grace is counting down. */
-  disconnected?: DisconnectInfo;
-  /**
-   * In finish mode, after the first player reaches the end, the other
-   * player gets this long to finish before the race auto-ends.
-   */
+  /** Seats that have asked for a rematch, only while status === "ended". */
+  rematchReady?: Seat[];
+  /** Set once the first racer finishes in finish mode. */
   finishGrace?: FinishGraceInfo;
 }
 
@@ -128,6 +155,8 @@ export type ClientMsg =
   | { t: "hello" }
   | { t: "ping" }
   | { t: "lock_in" }
+  /** Host-only: start with whoever is already here (needs MIN_PLAYERS). */
+  | { t: "start_race" }
   | {
       t: "progress";
       pos: number;
@@ -148,14 +177,12 @@ export type ClientMsg =
 
 /** Server → Client messages */
 export type ServerMsg =
-  | { t: "welcome"; role: PlayerRole; sessionToken: string }
+  | { t: "welcome"; seat: Seat; isHost: boolean; sessionToken: string }
   | { t: "spectator_welcome" }
   | { t: "state"; room: PublicRoomState }
-  | { t: "peer_joined"; playerCount: number }
-  | { t: "peer_left"; playerCount: number }
   | {
       t: "player_progress";
-      role: PlayerRole;
+      seat: Seat;
       pos: number;
       correctCount: number;
       wpm: number;
@@ -163,20 +190,12 @@ export type ServerMsg =
     }
   | {
       t: "player_finished";
-      role: PlayerRole;
+      seat: Seat;
       wpm: number;
       accuracy: number;
       elapsedMs: number;
     }
-  | {
-      t: "opponent_progress";
-      pos: number;
-      correctCount: number;
-      wpm: number;
-      accuracy: number;
-    }
-  | { t: "opponent_finished"; wpm: number; accuracy: number; elapsedMs: number }
-  | { t: "opponent_reaction"; key: ReactionKey; from: PlayerRole }
+  | { t: "player_reaction"; seat: Seat; key: ReactionKey }
   | { t: "error"; code: string; message: string }
   | { t: "pong" };
 
@@ -198,23 +217,54 @@ export const DEFAULT_CONFIG: RoomConfig = {
   endMode: "finish",
   passageLength: "medium",
   timeLimit: 60,
+  maxPlayers: 2,
 };
 
 /** Pre-race buffer (3-2-1 countdown). */
 export const START_BUFFER_MS = 3000;
 
 /**
- * After the guest joins, how long they have to click lock-in before the
- * race auto-starts anyway (safety net so a forgotten tab doesn't hang
- * the host forever).
+ * Once the room is full, how long racers have to lock in before the race
+ * auto-starts anyway (safety net so a forgotten tab doesn't hang the room).
  */
 export const READY_CHECK_MS = 15_000;
 
-/** Grace period when a player drops mid-race before they forfeit. */
-export const DISCONNECT_GRACE_MS = 30_000;
+/**
+ * In finish mode, how long everyone else has to finish after the first
+ * racer crosses. Scales with the number of racers still typing so a
+ * four-way race doesn't guillotine the back half of the field.
+ */
+export const FINISH_GRACE_BASE_MS = 10_000;
+export const FINISH_GRACE_PER_PLAYER_MS = 3_000;
 
-/** In finish mode, how long the second player has to finish after the first. */
-export const FINISH_GRACE_MS = 10_000;
+export function finishGraceMs(racersStillTyping: number): number {
+  const extra = Math.max(0, racersStillTyping - 1);
+  return FINISH_GRACE_BASE_MS + extra * FINISH_GRACE_PER_PLAYER_MS;
+}
 
-/** A room with zero connected players expires this long after the last leave. */
+/** A room with zero connected participants expires this long after the last leave. */
 export const ROOM_EXPIRY_MS = 10 * 60 * 1000;
+
+/**
+ * Absolute backstop on race duration. Seats are held for reconnecting
+ * racers rather than forfeited, so nothing else guarantees a finish-mode
+ * race terminates if people simply stop typing.
+ */
+export const RACE_CAP_FLOOR_MS = 90_000;
+export const RACE_CAP_CEILING_MS = 8 * 60 * 1000;
+
+export function raceCapMs(config: RoomConfig, passage: PassageInfo): number {
+  if (config.endMode === "time") {
+    return config.timeLimit * 1000 + 30_000;
+  }
+  // Budget the passage at a deliberately slow 8 wpm, then clamp.
+  const generous = (passage.wordCount / 8) * 60_000;
+  return Math.min(
+    RACE_CAP_CEILING_MS,
+    Math.max(RACE_CAP_FLOOR_MS, Math.round(generous))
+  );
+}
+
+export function normalizeMaxPlayers(value: unknown): MaxPlayers {
+  return value === 3 || value === 4 ? value : 2;
+}

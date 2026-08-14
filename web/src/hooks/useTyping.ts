@@ -88,6 +88,11 @@ export interface UseTypingOptions {
    * If omitted, timer auto-starts on first keystroke (single-player behavior).
    */
   startAt?: number;
+  /**
+   * Restores a partially typed passage, for a racer reconnecting into a
+   * race that is still running. Read once on mount.
+   */
+  initial?: { typed: string; totalKeystrokes: number };
 }
 
 export interface UseTypingResult {
@@ -131,12 +136,14 @@ type TypingAction =
     }
   | { type: "reset"; now: number };
 
-function createInitialStore(): TypingStore {
+function createInitialStore(
+  initial?: UseTypingOptions["initial"]
+): TypingStore {
   return {
-    typed: "",
+    typed: initial?.typed ?? "",
     manualStartedAt: null,
     endedAt: null,
-    totalKeystrokes: 0,
+    totalKeystrokes: initial?.totalKeystrokes ?? 0,
     now: Date.now(),
     samples: [],
   };
@@ -233,10 +240,10 @@ export function useTyping(
   passage: string,
   options: UseTypingOptions = {}
 ): UseTypingResult {
-  const { startAt: startAtOverride } = options;
+  const { startAt: startAtOverride, initial } = options;
   const [store, dispatch] = useReducer(
     typingReducer,
-    undefined,
+    initial,
     createInitialStore
   );
 

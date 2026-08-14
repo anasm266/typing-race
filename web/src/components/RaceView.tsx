@@ -1,41 +1,42 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useCapsLock } from "../hooks/useCapsLock";
 import { useTyping } from "../hooks/useTyping";
 import { CapsLockWarning } from "./CapsLockWarning";
-import { Passage } from "./Passage";
+import { Passage, type PassageCursor } from "./Passage";
 import { EndScreen } from "./EndScreen";
+import { RaceRail, type RailPlayer } from "./RaceRail";
 import { ReactionBar } from "./ReactionBar";
 import { ReactionToast } from "./ReactionToast";
 import { TouchKeyboardInput } from "./TouchKeyboardInput";
 import { calcAccuracy, formatElapsed, type WpmSample } from "../lib/wpm";
+import {
+  clearRaceProgress,
+  loadRaceProgress,
+  saveRaceProgress,
+} from "../lib/raceProgress";
+import { seatName, seatTheme } from "../lib/seats";
 import type {
   ClientMsg,
   FinishGraceInfo,
-  PlayerRole,
   PublicRoomState,
+  Seat,
 } from "../lib/protocol";
-import type {
-  OpponentFinish,
-  OpponentProgress,
-  OpponentReaction,
-} from "../hooks/useRoom";
+import type { LivePlayers, ReactionEvent } from "../hooks/useRoom";
 
 interface RaceViewProps {
   room: PublicRoomState;
-  role: PlayerRole | null;
-  opponentProgress: OpponentProgress | null;
-  opponentFinish: OpponentFinish | null;
-  opponentReaction: OpponentReaction | null;
+  seat: Seat | null;
+  livePlayers: LivePlayers;
+  reactions: ReactionEvent[];
   send: (msg: ClientMsg) => void;
   onNewRace: () => void;
 }
 
 export function RaceView({
   room,
-  role,
-  opponentProgress,
-  opponentFinish,
-  opponentReaction,
+  seat,
+  livePlayers,
+  reactions,
   send,
   onNewRace,
 }: RaceViewProps) {
@@ -52,8 +53,15 @@ export function RaceView({
   const localStartAt =
     startAt === undefined ? undefined : startAt - serverOffsetMs;
 
+  // Reconnecting into a live race restores the characters already typed;
+  // the server held the seat but only knows the position, not the text.
+  const [restored] = useState(() =>
+    status === "racing" ? loadRaceProgress(room.roomId, passage.id) : null
+  );
+
   const typing = useTyping(passage.text, {
     startAt: racing ? localStartAt : undefined,
+    initial: restored ?? undefined,
   });
   const {
     state: typingState,
@@ -67,19 +75,45 @@ export function RaceView({
   } = typing;
   const selfAccuracy = calcAccuracy(correctChars, totalKeystrokes);
 
-  // Accumulate opponent WPM samples for the post-race graph.
-  const [opponentSamples, setOpponentSamples] = useState<WpmSample[]>(
-    []
+  const rivals = useMemo(
+    () => room.players.filter((player) => player.seat !== seat),
+    [room.players, seat]
   );
-  const lastOpponentWpmRef = useRef<number | null>(null);
+  const isDuel = room.players.length <= 2;
+
+  // Sample rival WPM once a second for the post-race graph, matching the
+  // cadence useTyping uses locally. Sampling on a timer rather than on each
+  // inbound message keeps the graph evenly spaced and avoids doing work on
+  // the hot progress path.
+  const [rivalSamples, setRivalSamples] = useState<
+    Record<number, WpmSample[]>
+  >({});
+  const livePlayersRef = useRef(livePlayers);
   useEffect(() => {
-    if (!racing || !startAt) return;
-    if (!opponentProgress) return;
-    if (lastOpponentWpmRef.current === opponentProgress.wpm) return;
-    lastOpponentWpmRef.current = opponentProgress.wpm;
-    const t = Math.round(((now - startAt) / 1000) * 10) / 10;
-    setOpponentSamples((s) => [...s, { t, wpm: opponentProgress.wpm }]);
-  }, [opponentProgress, racing, startAt, now]);
+    livePlayersRef.current = livePlayers;
+  }, [livePlayers]);
+
+  useEffect(() => {
+    if (!racing || startAt === undefined) return;
+    const id = window.setInterval(() => {
+      const elapsedSec = (Date.now() + serverOffsetMs - startAt) / 1000;
+      if (elapsedSec <= 0) return;
+      const t = Math.round(elapsedSec * 10) / 10;
+      const snapshot = livePlayersRef.current;
+      setRivalSamples((previous) => {
+        const next = { ...previous };
+        for (const [key, live] of Object.entries(snapshot)) {
+          const rivalSeat = Number(key);
+          next[rivalSeat] = [
+            ...(next[rivalSeat] ?? []),
+            { t, wpm: live.wpm },
+          ];
+        }
+        return next;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [racing, startAt, serverOffsetMs]);
 
   // Always-on keyboard listener: preventDefault during both countdown
   // and race so Space doesn't scroll the page; forward to handleKey only
@@ -132,6 +166,16 @@ export function RaceView({
     });
   }, [typed.length, racing, typingState, correctChars, wpm, selfAccuracy, send]);
 
+  // Mirror progress locally so a dropped connection can resume mid-passage.
+  useEffect(() => {
+    if (!racing) return;
+    saveRaceProgress(room.roomId, passage.id, { typed, totalKeystrokes });
+  }, [racing, room.roomId, passage.id, typed, totalKeystrokes]);
+
+  useEffect(() => {
+    if (status === "ended") clearRaceProgress(room.roomId);
+  }, [status, room.roomId]);
+
   // One-shot finished message.
   const finishedSentRef = useRef(false);
   useEffect(() => {
@@ -145,14 +189,7 @@ export function RaceView({
       elapsedMs,
       correctCount: correctChars,
     });
-  }, [
-    typingState,
-    wpm,
-    selfAccuracy,
-    elapsedMs,
-    correctChars,
-    send,
-  ]);
+  }, [typingState, wpm, selfAccuracy, elapsedMs, correctChars, send]);
 
   useEffect(() => {
     finishedSentRef.current = false;
@@ -163,9 +200,9 @@ export function RaceView({
     return (
       <EndScreen
         room={room}
-        role={role}
+        seat={seat}
         mySamples={wpmSamples}
-        opponentSamples={opponentSamples}
+        rivalSamples={rivalSamples}
         onRematchRequest={() => send({ t: "rematch_request" })}
         onRematchCancel={() => send({ t: "rematch_cancel" })}
         onNewRace={onNewRace}
@@ -173,25 +210,48 @@ export function RaceView({
     );
   }
 
-  const opponentPos =
-    opponentProgress?.pos ??
-    (opponentFinish ? passage.text.length : undefined);
+  const passageLength = Math.max(1, passage.text.length);
+  const cursors: PassageCursor[] = rivals
+    .map((rival) => {
+      const live = livePlayers[rival.seat];
+      if (!live) return null;
+      const pos = live.finished ? passage.text.length : live.pos;
+      return {
+        seat: rival.seat,
+        pos,
+        color: seatTheme(rival.seat).color,
+        label: seatTheme(rival.seat).label,
+      } satisfies PassageCursor;
+    })
+    .filter((cursor): cursor is PassageCursor => cursor !== null);
+
+  const railPlayers: RailPlayer[] = room.players.map((player) => {
+    const isSelf = player.seat === seat;
+    const live = livePlayers[player.seat];
+    return {
+      seat: player.seat,
+      name: seatName(player.seat, seat),
+      wpm: isSelf ? wpm : (live?.wpm ?? null),
+      progress: isSelf
+        ? typed.length / passageLength
+        : (live?.finished ? passageLength : (live?.pos ?? 0)) / passageLength,
+      finished: isSelf ? typingState === "done" : !!live?.finished,
+      connected: player.connected,
+      isSelf,
+    };
+  });
 
   const myRoleDone = typingState === "done";
-  const finishGraceForMe: FinishGraceInfo | null =
-    room.finishGrace && role
-      ? room.finishGrace.firstFinisher === role
-        ? room.finishGrace // I'm the one who finished first
-        : room.finishGrace // rival finished first; I'm racing the clock
-      : null;
+  const duelRival = isDuel ? rivals[0] : undefined;
+  const duelRivalLive = duelRival ? livePlayers[duelRival.seat] : undefined;
 
   return (
     <div className="flex flex-col items-center gap-8 w-full max-w-[800px]">
-      {finishGraceForMe && (
+      {room.finishGrace && (
         <FinishGraceBanner
-          grace={finishGraceForMe}
+          grace={room.finishGrace}
           iFinishedFirst={
-            !!role && finishGraceForMe.firstFinisher === role
+            seat !== null && room.finishGrace.firstFinisherSeat === seat
           }
           now={now}
         />
@@ -199,19 +259,24 @@ export function RaceView({
 
       {status === "starting" ? (
         <Countdown startAt={startAt} now={now} />
-      ) : (
-        <StatsBar
+      ) : isDuel ? (
+        <DuelStats
           room={room}
+          seat={seat}
           now={now}
           selfElapsedMs={elapsedMs}
           selfWpm={wpm}
           selfAccuracy={selfAccuracy}
-          opponentWpm={
-            opponentProgress?.wpm ?? opponentFinish?.wpm ?? null
-          }
+          rivalSeat={duelRival?.seat ?? null}
+          rivalWpm={duelRivalLive?.wpm ?? null}
           selfDone={myRoleDone}
-          opponentDone={!!opponentFinish}
+          rivalDone={!!duelRivalLive?.finished}
         />
+      ) : (
+        <div className="flex w-full flex-col gap-4">
+          <RaceClock room={room} now={now} selfElapsedMs={elapsedMs} />
+          <RaceRail players={railPlayers} />
+        </div>
       )}
 
       <div className="w-full max-w-[800px]">
@@ -224,7 +289,11 @@ export function RaceView({
           <Passage
             passage={passage.text}
             typed={typed}
-            opponentPos={opponentPos}
+            cursors={cursors}
+            selfColor={
+              seat === null ? undefined : seatTheme(seat).color
+            }
+            showTags={!isDuel}
           />
         </TouchKeyboardInput>
       </div>
@@ -236,12 +305,15 @@ export function RaceView({
       <FooterHint
         status={status}
         selfDone={myRoleDone}
-        opponentDone={!!opponentFinish}
+        othersDone={rivals.every(
+          (rival) => livePlayers[rival.seat]?.finished
+        )}
         endMode={config.endMode}
         hasFinishGrace={!!room.finishGrace}
+        isDuel={isDuel}
       />
 
-      <ReactionToast latest={opponentReaction} myRole={role} />
+      <ReactionToast reactions={reactions} mySeat={seat} />
     </div>
   );
 }
@@ -267,15 +339,17 @@ function FinishGraceBanner({
       <span className="text-sm">
         {iFinishedFirst ? (
           <>
-            <span className="text-accent">you finished</span>
+            <span className="text-accent">you finished first</span>
             <span className="text-fg-dim">
               {" "}
-              · waiting for rival so the result can be scored
+              · waiting on the rest of the field
             </span>
           </>
         ) : (
           <>
-            <span className="text-opponent">rival finished</span>
+            <span className="text-opponent">
+              {seatTheme(grace.firstFinisherSeat).label} finished
+            </span>
             <span className="text-fg-dim">
               {" "}
               · finish strong before the result locks in
@@ -283,9 +357,7 @@ function FinishGraceBanner({
           </>
         )}
       </span>
-      <span className="text-sm tabular-nums text-fg">
-        {remaining}s
-      </span>
+      <span className="text-sm tabular-nums text-fg">{remaining}s</span>
     </div>
   );
 }
@@ -326,35 +398,70 @@ function Countdown({
   );
 }
 
-/* -------------------- stats bar -------------------- */
+/* -------------------- clocks and stats -------------------- */
 
-interface StatsBarProps {
+function raceTime(
+  room: PublicRoomState,
+  now: number,
+  selfElapsedMs: number
+): { label: string; value: string } {
+  const isTimeMode = room.config.endMode === "time";
+  return {
+    label: isTimeMode ? "time left" : "time",
+    value:
+      isTimeMode && room.endAt
+        ? formatElapsed(Math.max(0, room.endAt - now))
+        : formatElapsed(selfElapsedMs),
+  };
+}
+
+function RaceClock({
+  room,
+  now,
+  selfElapsedMs,
+}: {
   room: PublicRoomState;
+  now: number;
+  selfElapsedMs: number;
+}) {
+  const { label, value } = raceTime(room, now, selfElapsedMs);
+  return (
+    <div className="flex flex-col items-center">
+      <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
+        {label}
+      </span>
+      <span className="text-3xl tabular-nums text-fg">{value}</span>
+    </div>
+  );
+}
+
+interface DuelStatsProps {
+  room: PublicRoomState;
+  seat: Seat | null;
   now: number;
   selfElapsedMs: number;
   selfWpm: number;
   selfAccuracy: number;
-  opponentWpm: number | null;
+  rivalSeat: Seat | null;
+  rivalWpm: number | null;
   selfDone: boolean;
-  opponentDone: boolean;
+  rivalDone: boolean;
 }
 
-function StatsBar({
+/** The original head-to-head layout, kept for two-racer rooms. */
+function DuelStats({
   room,
+  seat,
   now,
   selfElapsedMs,
   selfWpm,
   selfAccuracy,
-  opponentWpm,
+  rivalSeat,
+  rivalWpm,
   selfDone,
-  opponentDone,
-}: StatsBarProps) {
-  const isTimeMode = room.config.endMode === "time";
-  const timeValue =
-    isTimeMode && room.endAt
-      ? formatElapsed(Math.max(0, room.endAt - now))
-      : formatElapsed(selfElapsedMs);
-  const timeLabel = isTimeMode ? "time left" : "time";
+  rivalDone,
+}: DuelStatsProps) {
+  const { label, value } = raceTime(room, now, selfElapsedMs);
 
   return (
     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-10 w-full">
@@ -363,23 +470,25 @@ function StatsBar({
         wpm={selfWpm}
         accuracy={`${selfAccuracy}%`}
         done={selfDone}
-        color="accent"
+        color={seat === null ? "var(--color-accent)" : seatTheme(seat).color}
         align="right"
       />
       <div className="flex flex-col items-center">
         <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
-          {timeLabel}
+          {label}
         </span>
-        <span className="text-2xl tabular-nums text-fg">
-          {timeValue}
-        </span>
+        <span className="text-2xl tabular-nums text-fg">{value}</span>
       </div>
       <PlayerStats
         label="rival"
-        wpm={opponentWpm}
+        wpm={rivalWpm}
         accuracy={null}
-        done={opponentDone}
-        color="opponent"
+        done={rivalDone}
+        color={
+          rivalSeat === null
+            ? "var(--color-opponent)"
+            : seatTheme(rivalSeat).color
+        }
         align="left"
       />
     </div>
@@ -391,7 +500,7 @@ interface PlayerStatsProps {
   wpm: number | null;
   accuracy: string | null;
   done: boolean;
-  color: "accent" | "opponent";
+  color: string;
   align: "left" | "right";
 }
 
@@ -403,22 +512,23 @@ function PlayerStats({
   color,
   align,
 }: PlayerStatsProps) {
-  const textColor = color === "accent" ? "text-accent" : "text-opponent";
-  const dotColor = color === "accent" ? "bg-accent" : "bg-opponent";
   const alignment = align === "right" ? "items-end" : "items-start";
   return (
     <div className={`flex flex-col ${alignment} gap-1`}>
       <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim flex items-center gap-1.5">
-        <span className={`inline-block size-1.5 rounded-full ${dotColor}`} />
+        <span
+          className="inline-block size-1.5 rounded-full"
+          style={{ background: color }}
+        />
         {label}
         {done && (
-          <span className={`ml-1 ${textColor} text-[0.6rem]`}>
+          <span className="ml-1 text-[0.6rem]" style={{ color }}>
             · done
           </span>
         )}
       </span>
       <div className="flex gap-3 items-baseline">
-        <span className={`text-2xl tabular-nums ${textColor}`}>
+        <span className="text-2xl tabular-nums" style={{ color }}>
           {wpm === null ? "—" : wpm}
         </span>
         <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
@@ -439,15 +549,17 @@ function PlayerStats({
 function FooterHint({
   status,
   selfDone,
-  opponentDone,
+  othersDone,
   endMode,
   hasFinishGrace,
+  isDuel,
 }: {
   status: PublicRoomState["status"];
   selfDone: boolean;
-  opponentDone: boolean;
+  othersDone: boolean;
   endMode: "finish" | "time";
   hasFinishGrace: boolean;
+  isDuel: boolean;
 }) {
   if (status === "starting") {
     return (
@@ -460,6 +572,8 @@ function FooterHint({
   // what's happening — keep the footer quiet so the UI doesn't shout.
   if (hasFinishGrace) return null;
 
+  const others = isDuel ? "rival" : "the field";
+
   if (endMode === "time" && selfDone) {
     return (
       <div className="text-xs text-ok">
@@ -467,22 +581,20 @@ function FooterHint({
       </div>
     );
   }
-  if (selfDone && opponentDone) {
-    return (
-      <div className="text-xs text-fg-dim">calculating result...</div>
-    );
+  if (selfDone && othersDone) {
+    return <div className="text-xs text-fg-dim">calculating result...</div>;
   }
   if (selfDone) {
     return (
       <div className="text-xs text-ok">
-        you finished · waiting for rival
+        you finished · waiting for {others}
       </div>
     );
   }
-  if (opponentDone) {
+  if (othersDone) {
     return (
       <div className="text-xs text-opponent">
-        rival finished · keep going
+        {isDuel ? "rival finished" : "everyone else finished"} · keep going
       </div>
     );
   }

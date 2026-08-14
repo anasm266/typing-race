@@ -9,6 +9,7 @@ import {
 import {
   DEFAULT_CONFIG,
   type EndMode,
+  type MaxPlayers,
   type PassageLength,
   type RoomConfig,
   type TimeLimit,
@@ -32,6 +33,7 @@ export function Home() {
         passageLength: config.passageLength,
         endMode: config.endMode,
         timeLimit: config.timeLimit,
+        maxPlayers: config.maxPlayers,
       },
     });
     try {
@@ -50,16 +52,34 @@ export function Home() {
   return (
     <div className="flex flex-col items-center gap-12 w-full max-w-[560px]">
       <div className="flex flex-col items-center gap-2 text-center">
-        <h2 className="text-3xl md:text-4xl">race a friend</h2>
+        <h2 className="text-3xl md:text-4xl">race your friends</h2>
         <p className="text-fg-dim text-sm md:text-base">
           share one link. race starts in seconds. no signup.
         </p>
         <p className="text-fg-dimmer text-xs">
-          two racers join. extra visitors watch live.
+          {config.maxPlayers} racers join. extra visitors watch live.
         </p>
       </div>
 
       <div className="flex flex-col gap-6 w-full">
+        <Field label="racers">
+          <PillGroup
+            value={config.maxPlayers}
+            options={
+              [
+                { value: 2, label: "2" },
+                { value: 3, label: "3" },
+                { value: 4, label: "4" },
+              ] satisfies Array<{ value: MaxPlayers; label: string }>
+            }
+            onChange={(v) => setConfig((c) => ({ ...c, maxPlayers: v }))}
+          />
+          <span className="text-xs text-fg-dimmer">
+            the race starts on its own once every seat fills · you can also
+            start early
+          </span>
+        </Field>
+
         <Field label="passage length">
           <PillGroup
             value={config.passageLength}
@@ -99,13 +119,13 @@ export function Home() {
                     value: "finish",
                     label: "finish passage",
                     description:
-                      "First to finish wins. After one racer finishes, the other gets 10 seconds to close the gap before the result locks.",
+                      "First to finish wins. Once one racer finishes, everyone else gets a short grace window to close the gap before the result locks.",
                   },
                   {
                     value: "time",
                     label: "time limit",
                     description:
-                      "Race against the clock. When time runs out, the result is scored wherever both racers ended up, finished or not.",
+                      "Race against the clock. When time runs out, everyone is scored wherever they ended up, finished or not.",
                   },
                 ] satisfies Array<{
                   value: EndMode;

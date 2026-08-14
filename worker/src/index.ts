@@ -3,6 +3,7 @@ import { Room as RoomClass } from "./room";
 import { pickPassage } from "./passages";
 import {
   DEFAULT_CONFIG,
+  normalizeMaxPlayers,
   type CreateRoomRequest,
   type CreateRoomResponse,
   type RoomSource,
@@ -83,7 +84,14 @@ function mergeConfig(partial?: Partial<RoomConfig>): RoomConfig {
       ? partial.timeLimit
       : DEFAULT_CONFIG.timeLimit;
 
-  return { endMode, passageLength, timeLimit };
+  return {
+    endMode,
+    passageLength,
+    timeLimit,
+    maxPlayers: normalizeMaxPlayers(
+      partial?.maxPlayers ?? DEFAULT_CONFIG.maxPlayers
+    ),
+  };
 }
 
 function normalizeSource(source: unknown): RoomSource {
@@ -105,6 +113,20 @@ interface RecentRaceRow {
   guest_accuracy: number;
   host_finished: number;
   guest_finished: number;
+  player_count: number;
+  winner_seat: number | null;
+}
+
+interface RacePlayerRow {
+  race_id: string;
+  seat: number;
+  place: number;
+  wpm: number;
+  accuracy: number;
+  elapsed_ms: number;
+  correct_chars: number;
+  finished: number;
+  dnf: number;
 }
 
 interface AnalyticsSummaryRow {
@@ -223,8 +245,10 @@ interface ActiveRoomRow {
   config_end_mode: string;
   config_passage_length: string;
   config_time_limit: number;
+  config_max_players: number;
   passage_words: number;
   player_count: number;
+  connected_count: number;
   spectator_count: number;
   host_connected: number;
   guest_connected: number;
@@ -441,14 +465,51 @@ async function handleRecent(env: Env): Promise<Response> {
               duration_ms,
               host_wpm, guest_wpm,
               host_accuracy, guest_accuracy,
-              host_finished, guest_finished
+              host_finished, guest_finished,
+              player_count, winner_seat
          FROM races
         ORDER BY finished_at DESC
         LIMIT 20`
     ).all<RecentRaceRow>();
 
+    const races = rs.results ?? [];
+    const seatsByRace = new Map<string, RacePlayerRow[]>();
+
+    if (races.length > 0) {
+      const placeholders = races.map(() => "?").join(", ");
+      const seats = await env.DB.prepare(
+        `SELECT race_id, seat, place, wpm, accuracy,
+                elapsed_ms, correct_chars, finished, dnf
+           FROM race_players
+          WHERE race_id IN (${placeholders})
+          ORDER BY place ASC, seat ASC`
+      )
+        .bind(...races.map((race) => race.id))
+        .all<RacePlayerRow>();
+
+      for (const row of seats.results ?? []) {
+        const list = seatsByRace.get(row.race_id) ?? [];
+        list.push(row);
+        seatsByRace.set(row.race_id, list);
+      }
+    }
+
     return json(
-      { races: rs.results ?? [] },
+      {
+        races: races.map((race) => ({
+          ...race,
+          players: (seatsByRace.get(race.id) ?? []).map((row) => ({
+            seat: row.seat,
+            place: row.place,
+            wpm: row.wpm,
+            accuracy: row.accuracy,
+            elapsedMs: row.elapsed_ms,
+            correctChars: row.correct_chars,
+            finished: row.finished === 1,
+            dnf: row.dnf === 1,
+          })),
+        })),
+      },
       200,
       { "Cache-Control": "no-store" }
     );
@@ -532,7 +593,8 @@ async function handleAdminAnalytics(
       env.DB.prepare(
         `SELECT room_id, created_at, updated_at, status,
                 config_end_mode, config_passage_length, config_time_limit,
-                passage_words, player_count, spectator_count,
+                config_max_players,
+                passage_words, player_count, connected_count, spectator_count,
                 host_connected, guest_connected,
                 race_started_at, race_ended_at, last_event, expires_at
            FROM active_rooms
@@ -620,8 +682,10 @@ async function handleAdminAnalytics(
           endMode: room.config_end_mode,
           passageLength: room.config_passage_length,
           timeLimit: room.config_time_limit,
+          maxPlayers: room.config_max_players,
           passageWords: room.passage_words,
           playerCount: room.player_count,
+          connectedCount: room.connected_count,
           spectatorCount: room.spectator_count,
           hostConnected: room.host_connected === 1,
           guestConnected: room.guest_connected === 1,

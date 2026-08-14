@@ -1,87 +1,119 @@
-import { memo, useEffect, useState } from "react";
-import type { PlayerRole, ReactionKey } from "../lib/protocol";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import type { Seat } from "../lib/protocol";
 import { REACTION_BY_KEY, REACTION_TOAST_MS } from "../lib/reactions";
-import type { OpponentReaction } from "../hooks/useRoom";
+import { seatName, seatTheme } from "../lib/seats";
+import type { ReactionEvent } from "../hooks/useRoom";
 
 interface ReactionToastProps {
-  latest: OpponentReaction | null;
-  myRole: PlayerRole | null;
-}
-
-interface ActiveToast {
-  id: number;
-  key: ReactionKey;
-  phase: "hidden" | "visible" | "leaving";
+  reactions: ReactionEvent[];
+  mySeat: Seat | null;
 }
 
 const TOAST_LEAVE_MS = 160;
+const MAX_VISIBLE = 3;
+const STACK_OFFSET_PX = 52;
 
 export const ReactionToast = memo(function ReactionToast({
-  latest,
-  myRole,
+  reactions,
+  mySeat,
 }: ReactionToastProps) {
-  const [toast, setToast] = useState<ActiveToast | null>(null);
+  const [stack, setStack] = useState<ReactionEvent[]>([]);
+  const seenRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
-    if (!latest) return;
-    // Ignore reactions the current client sent (shouldn't happen since
-    // server broadcasts with broadcastExcept, but belt + suspenders).
-    if (myRole && latest.from === myRole) return;
-    setToast({ id: latest.at, key: latest.key, phase: "hidden" });
-  }, [latest, myRole]);
+    const fresh = reactions.filter(
+      (reaction) =>
+        !seenRef.current.has(reaction.id) && reaction.seat !== mySeat
+    );
+    if (fresh.length === 0) return;
+    for (const reaction of fresh) seenRef.current.add(reaction.id);
+    setStack((current) => [...current, ...fresh].slice(-MAX_VISIBLE));
+  }, [reactions, mySeat]);
+
+  const dismiss = useCallback((id: number) => {
+    setStack((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  if (stack.length === 0) return null;
+
+  return (
+    <>
+      {stack.map((toast, index) => (
+        <Toast
+          key={toast.id}
+          reaction={toast}
+          mySeat={mySeat}
+          offset={index * STACK_OFFSET_PX}
+          onDone={dismiss}
+        />
+      ))}
+    </>
+  );
+});
+
+function Toast({
+  reaction,
+  mySeat,
+  offset,
+  onDone,
+}: {
+  reaction: ReactionEvent;
+  mySeat: Seat | null;
+  offset: number;
+  onDone: (id: number) => void;
+}) {
+  const [phase, setPhase] = useState<"hidden" | "visible" | "leaving">(
+    "hidden"
+  );
 
   useEffect(() => {
-    if (!toast) return;
-    if (toast.phase !== "hidden") return;
-
-    const raf = window.requestAnimationFrame(() => {
-      setToast((prev) =>
-        prev?.id === toast.id ? { ...prev, phase: "visible" } : prev
-      );
-    });
-
+    const raf = window.requestAnimationFrame(() => setPhase("visible"));
     return () => window.cancelAnimationFrame(raf);
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
-    if (!toast || toast.phase !== "visible") return;
-
-    const leaveDelay = Math.max(0, REACTION_TOAST_MS - TOAST_LEAVE_MS);
-    const leaveId = window.setTimeout(() => {
-      setToast((prev) =>
-        prev?.id === toast.id ? { ...prev, phase: "leaving" } : prev
-      );
-    }, leaveDelay);
-
-    const clearId = window.setTimeout(() => {
-      setToast((prev) => (prev?.id === toast.id ? null : prev));
-    }, REACTION_TOAST_MS);
-
+    const leaveId = window.setTimeout(
+      () => setPhase("leaving"),
+      Math.max(0, REACTION_TOAST_MS - TOAST_LEAVE_MS)
+    );
+    const clearId = window.setTimeout(
+      () => onDone(reaction.id),
+      REACTION_TOAST_MS
+    );
     return () => {
       window.clearTimeout(leaveId);
       window.clearTimeout(clearId);
     };
-  }, [toast]);
+  }, [reaction.id, onDone]);
 
-  if (!toast) return null;
-  const def = REACTION_BY_KEY[toast.key];
+  const def = REACTION_BY_KEY[reaction.key];
   if (!def) return null;
+
+  const theme = seatTheme(reaction.seat);
 
   return (
     <div
-      key={toast.id}
       role="status"
       aria-live="polite"
-      data-state={toast.phase}
-      className="reaction-toast fixed top-4 left-1/2 z-50 flex items-center gap-3 px-4 py-2 bg-bg-soft border border-opponent/50 shadow-lg shadow-opponent/10"
+      data-state={phase}
+      className="reaction-toast fixed top-4 left-1/2 z-50 flex items-center gap-3 px-4 py-2 bg-bg-soft border shadow-lg"
+      style={
+        {
+          "--toast-offset": `${offset}px`,
+          borderColor: theme.color,
+        } as React.CSSProperties
+      }
     >
       <span className="text-2xl leading-none">{def.emoji}</span>
       <div className="flex flex-col items-start">
-        <span className="text-[0.6rem] uppercase tracking-[0.15em] text-opponent">
-          rival
+        <span
+          className="text-[0.6rem] uppercase tracking-[0.15em]"
+          style={{ color: theme.color }}
+        >
+          {seatName(reaction.seat, mySeat)}
         </span>
         <span className="text-sm text-fg">{def.text}</span>
       </div>
     </div>
   );
-});
+}

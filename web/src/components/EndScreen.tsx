@@ -1,45 +1,55 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import type {
   PlayerResult,
-  PlayerRole,
   PublicRoomState,
   RaceResult,
+  Seat,
 } from "../lib/protocol";
 import { formatElapsed, type WpmSample } from "../lib/wpm";
 import { addLocalHistoryEntry } from "../lib/localHistory";
 import { trackEvent } from "../lib/analytics";
-import { WpmGraph } from "./WpmGraph";
+import { seatName, seatTheme } from "../lib/seats";
+import { WpmGraph, type WpmSeries } from "./WpmGraph";
 
 interface EndScreenProps {
   room: PublicRoomState;
-  role: PlayerRole | null;
+  seat: Seat | null;
   mySamples: WpmSample[];
-  opponentSamples: WpmSample[];
+  rivalSamples: Record<number, WpmSample[]>;
   onRematchRequest: () => void;
   onRematchCancel: () => void;
   onNewRace: () => void;
 }
 
+type Outcome = "win" | "lose" | "tie";
+
 export function EndScreen({
   room,
-  role,
+  seat,
   mySamples,
-  opponentSamples,
+  rivalSamples,
   onRematchRequest,
   onRematchCancel,
   onNewRace,
 }: EndScreenProps) {
   const result = room.result;
+  const standings = useMemo(() => result?.players ?? [], [result]);
+  const me = standings.find((player) => player.seat === seat) ?? null;
+  const outcome = interpretOutcome(result, seat);
+  const isDuel = standings.length <= 2;
 
   useEffect(() => {
-    if (!result || !role) return;
+    if (!result || !me) return;
 
-    const me = role === "guest" ? result.guest : result.host;
-    const them = role === "guest" ? result.host : result.guest;
-    const outcome = interpretOutcome(result, role);
-    const raceDurationMs = Math.max(
-      result.host.elapsedMs,
-      result.guest.elapsedMs
+    const rivals = result.players.filter((player) => player.seat !== seat);
+    const bestRival = rivals.reduce<PlayerResult | null>(
+      (best, player) =>
+        best === null || player.wpm > best.wpm ? player : best,
+      null
+    );
+    const raceDurationMs = result.players.reduce(
+      (max, player) => Math.max(max, player.elapsedMs),
+      0
     );
 
     addLocalHistoryEntry({
@@ -61,25 +71,31 @@ export function EndScreen({
       accuracy: me.accuracy,
       elapsedMs: me.elapsedMs,
       correctChars: me.correctCount,
-      opponentWpm: them.wpm,
-      opponentAccuracy: them.accuracy,
+      opponentWpm: bestRival?.wpm,
+      opponentAccuracy: bestRival?.accuracy,
+      place: me.place,
+      playerCount: result.players.length,
     });
     trackEvent("room_result_viewed", {
       roomId: room.roomId,
       path: `/room/${room.roomId}`,
       metadata: {
-        role,
+        seat: me.seat,
+        place: me.place,
+        playerCount: result.players.length,
         outcome,
         endReason: result.endReason,
         passageLength: room.config.passageLength,
         endMode: room.config.endMode,
         myWpm: me.wpm,
-        opponentWpm: them.wpm,
+        bestRivalWpm: bestRival?.wpm ?? 0,
       },
     });
   }, [
     result,
-    role,
+    me,
+    seat,
+    outcome,
     room.config.endMode,
     room.config.passageLength,
     room.passage.id,
@@ -88,27 +104,22 @@ export function EndScreen({
   ]);
 
   const iAmReady =
-    !!role && !!room.rematchReady && room.rematchReady[role];
-  const requested = iAmReady;
-  const opponentReady =
-    !!role &&
-    !!room.rematchReady &&
-    room.rematchReady[role === "host" ? "guest" : "host"];
-
-  // Rematch only makes sense if both players are currently connected.
-  // A disconnect forfeit that later reconnects (via their session token)
-  // should re-enable rematch — only the live WS count matters.
-  const rivalPresent = room.playerCount >= 2;
+    seat !== null && !!room.rematchReady?.includes(seat);
+  const connectedPlayers = room.players.filter((player) => player.connected);
+  const canRematch = connectedPlayers.length >= 2;
+  const readyCount = (room.rematchReady ?? []).filter((readySeat) =>
+    connectedPlayers.some((player) => player.seat === readySeat)
+  ).length;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        if (!rivalPresent) {
+        if (!canRematch) {
           onNewRace();
           return;
         }
-        if (requested) {
+        if (iAmReady) {
           onRematchCancel();
         } else {
           onRematchRequest();
@@ -117,7 +128,29 @@ export function EndScreen({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [requested, rivalPresent, onRematchRequest, onRematchCancel, onNewRace]);
+  }, [iAmReady, canRematch, onRematchRequest, onRematchCancel, onNewRace]);
+
+  const series: WpmSeries[] = useMemo(() => {
+    const lines: WpmSeries[] = [];
+    if (seat !== null) {
+      lines.push({
+        id: `s${seat}`,
+        name: "you",
+        color: seatTheme(seat).color,
+        samples: mySamples,
+      });
+    }
+    for (const player of standings) {
+      if (player.seat === seat) continue;
+      lines.push({
+        id: `s${player.seat}`,
+        name: seatTheme(player.seat).label,
+        color: seatTheme(player.seat).color,
+        samples: rivalSamples[player.seat] ?? [],
+      });
+    }
+    return lines;
+  }, [seat, mySamples, rivalSamples, standings]);
 
   if (!result) {
     return (
@@ -133,24 +166,21 @@ export function EndScreen({
     );
   }
 
-  const outcome = interpretOutcome(result, role);
-  const me = role === "guest" ? result.guest : result.host;
-  const them = role === "guest" ? result.host : result.guest;
-
   // Truncate samples to the race window (client keeps ticking even after
-  // server ends the race, so we clip to the actual duration).
+  // the server ends the race, so we clip to the actual duration).
   const raceDurationSec =
     result.endReason === "time_up"
       ? room.config.timeLimit
-      : Math.max(
-          result.host.elapsedMs,
-          result.guest.elapsedMs
+      : result.players.reduce(
+          (max, player) => Math.max(max, player.elapsedMs),
+          0
         ) / 1000;
 
-  const clippedMine = mySamples.filter((s) => s.t <= raceDurationSec);
-  const clippedTheirs = opponentSamples.filter(
-    (s) => s.t <= raceDurationSec
-  );
+  const clippedSeries = series.map((line) => ({
+    ...line,
+    samples: line.samples.filter((sample) => sample.t <= raceDurationSec),
+  }));
+
   const showFinishScore = result.endReason === "finish";
   const isWordSprint = room.passage.wordCount === 1;
 
@@ -158,49 +188,44 @@ export function EndScreen({
     <div className="flex flex-col items-center gap-10 w-full max-w-[760px]">
       <Banner
         outcome={outcome}
+        place={me?.place ?? null}
+        fieldSize={standings.length}
         reason={reasonLabel(result, isWordSprint)}
       />
 
-      <div className="grid grid-cols-[1fr_auto_1fr] gap-10 items-center w-full">
-        <ResultColumn
-          label="you"
-          color="accent"
-          result={me}
+      {isDuel ? (
+        <DuelResults
+          standings={standings}
+          mySeat={seat}
           showFinishScore={showFinishScore}
           isWordSprint={isWordSprint}
-          align="right"
         />
-        <div className="h-24 w-px bg-border" aria-hidden />
-        <ResultColumn
-          label="rival"
-          color="opponent"
-          result={them}
+      ) : (
+        <Standings
+          standings={standings}
+          mySeat={seat}
           showFinishScore={showFinishScore}
           isWordSprint={isWordSprint}
-          align="left"
         />
-      </div>
+      )}
 
       {isWordSprint ? (
         <WordSprintSummary
-          outcome={outcome}
-          me={me}
-          them={them}
+          standings={standings}
+          mySeat={seat}
           wordLength={room.passage.text.length}
         />
       ) : (
-        <WpmGraph
-          mySamples={clippedMine}
-          opponentSamples={clippedTheirs}
-          raceDurationSec={raceDurationSec}
-        />
+        <WpmGraph series={clippedSeries} raceDurationSec={raceDurationSec} />
       )}
 
       <div className="flex flex-col items-center gap-3">
         <RematchControls
-          requested={requested}
-          opponentReady={opponentReady}
-          rivalPresent={rivalPresent}
+          requested={iAmReady}
+          readyCount={readyCount}
+          connectedCount={connectedPlayers.length}
+          canRematch={canRematch}
+          isDuel={isDuel}
           onRequest={onRematchRequest}
           onCancel={onRematchCancel}
           onNewRace={onNewRace}
@@ -213,27 +238,18 @@ export function EndScreen({
 /* -------------------- one-word sprint summary -------------------- */
 
 function WordSprintSummary({
-  outcome,
-  me,
-  them,
+  standings,
+  mySeat,
   wordLength,
 }: {
-  outcome: Outcome;
-  me: PlayerResult;
-  them: PlayerResult;
+  standings: PlayerResult[];
+  mySeat: Seat | null;
   wordLength: number;
 }) {
-  const explanation = sprintExplanation(outcome, me, them);
-  const meWon = outcome === "win";
-  const themWon = outcome === "lose";
-  const fastestElapsed = Math.max(1, Math.min(me.elapsedMs, them.elapsedMs));
-  const meBar = Math.max(
-    8,
-    Math.round((fastestElapsed / Math.max(me.elapsedMs, 1)) * 100)
-  );
-  const themBar = Math.max(
-    8,
-    Math.round((fastestElapsed / Math.max(them.elapsedMs, 1)) * 100)
+  const explanation = sprintExplanation(standings, mySeat);
+  const fastest = standings.reduce(
+    (min, player) => Math.min(min, Math.max(1, player.elapsedMs)),
+    Number.POSITIVE_INFINITY
   );
 
   return (
@@ -244,40 +260,25 @@ function WordSprintSummary({
           <span className="text-[0.65rem] uppercase tracking-[0.25em] text-fg-dim">
             one word sprint
           </span>
-          <strong
-            className={
-              "text-lg font-medium " +
-              (outcome === "win"
-                ? "text-accent"
-                : outcome === "lose"
-                ? "text-opponent"
-                : "text-fg")
-            }
-          >
+          <strong className="text-lg font-medium text-fg">
             {explanation.headline}
           </strong>
-          <span className="text-xs text-fg-dimmer">
-            {explanation.detail}
-          </span>
+          <span className="text-xs text-fg-dimmer">{explanation.detail}</span>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          <SprintPlayerCard
-            label="you"
-            color="accent"
-            result={me}
-            wordLength={wordLength}
-            winner={meWon}
-            barWidth={meBar}
-          />
-          <SprintPlayerCard
-            label="rival"
-            color="opponent"
-            result={them}
-            wordLength={wordLength}
-            winner={themWon}
-            barWidth={themBar}
-          />
+          {standings.map((player) => (
+            <SprintPlayerCard
+              key={player.seat}
+              player={player}
+              mySeat={mySeat}
+              wordLength={wordLength}
+              barWidth={Math.max(
+                8,
+                Math.round((fastest / Math.max(player.elapsedMs, 1)) * 100)
+              )}
+            />
+          ))}
         </div>
       </div>
     </section>
@@ -285,44 +286,37 @@ function WordSprintSummary({
 }
 
 function SprintPlayerCard({
-  label,
-  color,
-  result,
+  player,
+  mySeat,
   wordLength,
-  winner,
   barWidth,
 }: {
-  label: string;
-  color: "accent" | "opponent";
-  result: PlayerResult;
+  player: PlayerResult;
+  mySeat: Seat | null;
   wordLength: number;
-  winner: boolean;
   barWidth: number;
 }) {
-  const textColor = color === "accent" ? "text-accent" : "text-opponent";
-  const bgColor = color === "accent" ? "bg-accent" : "bg-opponent";
-  const borderColor =
-    color === "accent" ? "border-accent/45" : "border-opponent/45";
-  const glow =
-    color === "accent"
-      ? "shadow-[0_0_36px_rgba(34,211,238,0.10)]"
-      : "shadow-[0_0_36px_rgba(244,114,182,0.10)]";
+  const theme = seatTheme(player.seat);
+  const winner = player.place === 1 && !player.dnf;
 
   return (
     <div
       className={
         "word-sprint-player border bg-bg/70 p-4 transition-transform duration-200 hover:-translate-y-0.5 " +
-        (winner ? `${borderColor} ${glow}` : "border-border")
+        (winner ? `${theme.borderSoft} ${theme.glow}` : "border-border")
       }
     >
       <div className="mb-4 flex items-center justify-between gap-3">
         <span className="flex items-center gap-2 text-[0.7rem] uppercase tracking-[0.2em] text-fg-dim">
-          <span className={`inline-block size-1.5 rounded-full ${bgColor}`} />
-          {label}
+          <span
+            className={`inline-block size-1.5 rounded-full ${theme.bg}`}
+            aria-hidden
+          />
+          {seatName(player.seat, mySeat)}
         </span>
         {winner && (
           <span
-            className={`word-sprint-winner px-2 py-1 text-[0.6rem] uppercase tracking-[0.18em] ${textColor} border ${borderColor}`}
+            className={`word-sprint-winner px-2 py-1 text-[0.6rem] uppercase tracking-[0.18em] ${theme.text} border ${theme.borderSoft}`}
           >
             winner
           </span>
@@ -331,8 +325,8 @@ function SprintPlayerCard({
 
       <div className="flex items-end justify-between gap-4">
         <div>
-          <div className={`text-4xl tabular-nums ${textColor}`}>
-            {formatSprintTime(result.elapsedMs)}
+          <div className={`text-4xl tabular-nums ${theme.text}`}>
+            {formatSprintTime(player.elapsedMs)}
           </div>
           <div className="mt-1 text-[0.65rem] uppercase tracking-[0.15em] text-fg-dimmer">
             finish time
@@ -340,16 +334,15 @@ function SprintPlayerCard({
         </div>
         <div className="text-right text-xs text-fg-dim">
           <div>
-            <span className="tabular-nums text-fg">{result.wpm}</span>{" "}
-            wpm
+            <span className="tabular-nums text-fg">{player.wpm}</span> wpm
           </div>
           <div>
-            <span className="tabular-nums text-fg">{result.accuracy}%</span>{" "}
+            <span className="tabular-nums text-fg">{player.accuracy}%</span>{" "}
             accuracy
           </div>
           <div>
             <span className="tabular-nums text-fg">
-              {result.correctCount}/{wordLength}
+              {player.correctCount}/{wordLength}
             </span>{" "}
             chars
           </div>
@@ -358,8 +351,8 @@ function SprintPlayerCard({
 
       <div className="mt-4 h-1.5 overflow-hidden bg-bg-soft-2">
         <div
-          className={`h-full ${bgColor} word-sprint-bar`}
-          style={{ width: `${barWidth}%` }}
+          className="h-full word-sprint-bar"
+          style={{ width: `${barWidth}%`, background: theme.color }}
         />
       </div>
     </div>
@@ -367,68 +360,280 @@ function SprintPlayerCard({
 }
 
 function sprintExplanation(
-  outcome: Outcome,
-  me: PlayerResult,
-  them: PlayerResult
+  standings: PlayerResult[],
+  mySeat: Seat | null
 ): { headline: string; detail: string } {
-  if (outcome === "tie") {
+  const winner = standings[0];
+  const runnerUp = standings[1];
+  if (!winner || !runnerUp) {
+    return {
+      headline: "sprint over",
+      detail: "not enough racers to compare",
+    };
+  }
+  if (winner.place === runnerUp.place) {
     return {
       headline: "dead heat",
-      detail: "both racers were effectively even on this word",
+      detail: "the top racers were effectively even on this word",
     };
   }
 
-  const winner = outcome === "win" ? me : them;
-  const loser = outcome === "win" ? them : me;
-  const winnerLabel = outcome === "win" ? "you" : "rival";
+  const label = seatName(winner.seat, mySeat);
 
-  if (winner.finishedPassage && !loser.finishedPassage) {
+  if (winner.finishedPassage && !runnerUp.finishedPassage) {
     return {
-      headline: `${winnerLabel} finished the word`,
+      headline: `${label} finished the word`,
       detail: "clean completion decided the sprint",
     };
   }
-
-  if (winner.correctCount !== loser.correctCount) {
+  if (winner.correctCount !== runnerUp.correctCount) {
     return {
-      headline: `${winnerLabel} typed more clean chars`,
-      detail: `${winner.correctCount} of ${Math.max(
-        winner.correctCount,
-        loser.correctCount
-      )} chars counted before the result locked`,
+      headline: `${label} typed more clean chars`,
+      detail: `${winner.correctCount} chars counted before the result locked`,
     };
   }
-
-  if (winner.accuracy !== loser.accuracy) {
+  if (winner.accuracy !== runnerUp.accuracy) {
     return {
-      headline: `${winnerLabel} won on accuracy`,
-      detail: `${winner.accuracy}% vs ${loser.accuracy}%`,
+      headline: `${label} won on accuracy`,
+      detail: `${winner.accuracy}% vs ${runnerUp.accuracy}%`,
     };
   }
-
-  const margin = Math.abs(winner.elapsedMs - loser.elapsedMs);
+  const margin = Math.abs(winner.elapsedMs - runnerUp.elapsedMs);
   return {
-    headline: `${winnerLabel} won by ${formatSprintMargin(margin)}`,
+    headline: `${label} won by ${formatSprintTime(margin)}`,
     detail: "reaction time and clean execution decided it",
   };
 }
 
-function formatSprintTime(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
+/* -------------------- standings -------------------- */
+
+function Standings({
+  standings,
+  mySeat,
+  showFinishScore,
+  isWordSprint,
+}: {
+  standings: PlayerResult[];
+  mySeat: Seat | null;
+  showFinishScore: boolean;
+  isWordSprint: boolean;
+}) {
+  return (
+    <div className="flex w-full flex-col divide-y divide-border border-y border-border">
+      {standings.map((player, index) => (
+        <StandingRow
+          key={player.seat}
+          player={player}
+          mySeat={mySeat}
+          index={index}
+          showFinishScore={showFinishScore}
+          isWordSprint={isWordSprint}
+        />
+      ))}
+    </div>
+  );
 }
 
-function formatSprintMargin(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
+function StandingRow({
+  player,
+  mySeat,
+  index,
+  showFinishScore,
+  isWordSprint,
+}: {
+  player: PlayerResult;
+  mySeat: Seat | null;
+  index: number;
+  showFinishScore: boolean;
+  isWordSprint: boolean;
+}) {
+  const theme = seatTheme(player.seat);
+  const isMe = player.seat === mySeat;
+  const isWinner = player.place === 1 && !player.dnf;
+
+  return (
+    <div
+      className="word-sprint-player grid grid-cols-[2.5rem_1fr_auto] items-center gap-4 px-1 py-4"
+      style={{ animationDelay: `${index * 70}ms` }}
+    >
+      <span
+        className={
+          "text-sm tabular-nums " +
+          (isWinner ? theme.text : "text-fg-dimmer")
+        }
+      >
+        {player.dnf ? "—" : placeLabel(player.place)}
+      </span>
+
+      <span className="flex items-center gap-2 text-[0.7rem] uppercase tracking-[0.2em] text-fg-dim">
+        <span
+          className={`inline-block size-1.5 rounded-full ${theme.bg}`}
+          aria-hidden
+        />
+        <span className={isMe ? theme.text : undefined}>
+          {seatName(player.seat, mySeat)}
+        </span>
+        {player.dnf ? (
+          <span className="text-fg-dimmer text-[0.6rem]">left</span>
+        ) : (
+          player.finishedPassage && (
+            <span className="text-ok text-[0.6rem]">finished</span>
+          )
+        )}
+      </span>
+
+      <span className="flex items-baseline gap-4 text-xs text-fg-dim">
+        <span className="flex items-baseline gap-1.5">
+          <span className={`text-2xl tabular-nums ${theme.text}`}>
+            {isWordSprint ? formatSprintTime(player.elapsedMs) : player.wpm}
+          </span>
+          <span className="text-[0.6rem] uppercase tracking-[0.15em]">
+            {isWordSprint ? "time" : "wpm"}
+          </span>
+        </span>
+        <span className="tabular-nums text-fg-dim w-14 text-right">
+          {player.accuracy}%
+        </span>
+        <span className="tabular-nums text-fg-dimmer w-16 text-right">
+          {showFinishScore && !isWordSprint
+            ? formatScore(finishModeScore(player))
+            : formatElapsed(player.elapsedMs)}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/** The original side-by-side layout, kept for two-racer rooms. */
+function DuelResults({
+  standings,
+  mySeat,
+  showFinishScore,
+  isWordSprint,
+}: {
+  standings: PlayerResult[];
+  mySeat: Seat | null;
+  showFinishScore: boolean;
+  isWordSprint: boolean;
+}) {
+  const me = standings.find((player) => player.seat === mySeat);
+  const them = standings.find((player) => player.seat !== mySeat);
+  const left = me ?? standings[0];
+  const right = them ?? standings[1];
+
+  if (!left || !right) {
+    return (
+      <Standings
+        standings={standings}
+        mySeat={mySeat}
+        showFinishScore={showFinishScore}
+        isWordSprint={isWordSprint}
+      />
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-[1fr_auto_1fr] gap-10 items-center w-full">
+      <ResultColumn
+        label={seatName(left.seat, mySeat)}
+        result={left}
+        showFinishScore={showFinishScore}
+        isWordSprint={isWordSprint}
+        align="right"
+      />
+      <div className="h-24 w-px bg-border" aria-hidden />
+      <ResultColumn
+        label={left.seat === mySeat ? "rival" : seatName(right.seat, mySeat)}
+        result={right}
+        showFinishScore={showFinishScore}
+        isWordSprint={isWordSprint}
+        align="left"
+      />
+    </div>
+  );
+}
+
+interface ResultColumnProps {
+  label: string;
+  result: PlayerResult;
+  showFinishScore: boolean;
+  isWordSprint: boolean;
+  align: "left" | "right";
+}
+
+function ResultColumn({
+  label,
+  result,
+  showFinishScore,
+  isWordSprint,
+  align,
+}: ResultColumnProps) {
+  const theme = seatTheme(result.seat);
+  const alignment =
+    align === "right" ? "items-end text-right" : "items-start text-left";
+
+  return (
+    <div className={`flex flex-col ${alignment} gap-4`}>
+      <span className="text-[0.7rem] uppercase tracking-[0.2em] text-fg-dim flex items-center gap-1.5">
+        <span
+          className={`inline-block size-1.5 rounded-full ${theme.bg}`}
+          aria-hidden
+        />
+        {label}
+        {result.dnf ? (
+          <span className="ml-1 text-[0.6rem] text-fg-dimmer">· left</span>
+        ) : (
+          result.finishedPassage && (
+            <span className={`ml-1 text-[0.6rem] ${theme.text}`}>
+              · finished
+            </span>
+          )
+        )}
+      </span>
+
+      <div className="flex items-baseline gap-2">
+        <span className={`text-5xl tabular-nums font-medium ${theme.text}`}>
+          {isWordSprint ? formatSprintTime(result.elapsedMs) : result.wpm}
+        </span>
+        <span className="text-xs uppercase tracking-[0.15em] text-fg-dim">
+          {isWordSprint ? "time" : "wpm"}
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-1 text-sm">
+        {showFinishScore && !isWordSprint && (
+          <Stat label="score" value={formatScore(finishModeScore(result))} />
+        )}
+        {isWordSprint && <Stat label="wpm" value={`${result.wpm}`} />}
+        <Stat label="accuracy" value={`${result.accuracy}%`} />
+        {!isWordSprint && (
+          <Stat label="time" value={formatElapsed(result.elapsedMs)} />
+        )}
+        <Stat label="chars" value={`${result.correctCount}`} />
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-2 justify-between min-w-[140px]">
+      <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
+        {label}
+      </span>
+      <span className="tabular-nums text-fg">{value}</span>
+    </div>
+  );
 }
 
 /* -------------------- rematch controls -------------------- */
 
 interface RematchControlsProps {
   requested: boolean;
-  opponentReady: boolean;
-  rivalPresent: boolean;
+  readyCount: number;
+  connectedCount: number;
+  canRematch: boolean;
+  isDuel: boolean;
   onRequest: () => void;
   onCancel: () => void;
   onNewRace: () => void;
@@ -436,17 +641,16 @@ interface RematchControlsProps {
 
 function RematchControls({
   requested,
-  opponentReady,
-  rivalPresent,
+  readyCount,
+  connectedCount,
+  canRematch,
+  isDuel,
   onRequest,
   onCancel,
   onNewRace,
 }: RematchControlsProps) {
-  // Rival is gone — rematch is impossible. Show only "new race" and
-  // explain why. (Server auto-clears the leaver's rematchReady on
-  // disconnect, so if a stale requested=true sneaks through we just
-  // ignore it.)
-  if (!rivalPresent) {
+  // Not enough people left in the room to run another race.
+  if (!canRematch) {
     return (
       <>
         <div className="flex items-center gap-4">
@@ -454,7 +658,7 @@ function RematchControls({
             disabled
             className="px-6 py-2 border border-border text-fg-dimmer cursor-not-allowed"
             aria-disabled="true"
-            title="rival disconnected"
+            title="not enough racers left"
           >
             rematch unavailable
           </button>
@@ -468,7 +672,7 @@ function RematchControls({
 
         <div className="text-xs text-opponent min-h-[1em] flex items-center gap-1.5">
           <span className="inline-block size-1.5 rounded-full bg-opponent" />
-          rival disconnected · can't rematch without them
+          {isDuel ? "rival left" : "not enough racers left"} · can't rematch
         </div>
         <div className="text-[0.65rem] text-fg-dimmer">
           press <span className="text-fg-dim">enter</span> to start a new race
@@ -476,6 +680,8 @@ function RematchControls({
       </>
     );
   }
+
+  const waitingOn = Math.max(0, connectedCount - readyCount);
 
   return (
     <>
@@ -486,7 +692,7 @@ function RematchControls({
             className="px-6 py-2 border border-accent text-accent hover:bg-bg-soft transition-colors flex items-center gap-2"
           >
             <span className="inline-block size-1.5 rounded-full bg-accent animate-pulse" />
-            waiting for rival...
+            waiting · {readyCount}/{connectedCount} ready
             <span className="text-fg-dim text-xs">(cancel)</span>
           </button>
         ) : (
@@ -506,43 +712,55 @@ function RematchControls({
       </div>
 
       <div className="text-xs text-fg-dimmer min-h-[1em]">
-        {opponentReady && !requested && (
-          <span className="text-opponent">rival wants a rematch</span>
+        {!requested && readyCount > 0 && (
+          <span className="text-opponent">
+            {readyCount} {readyCount === 1 ? "racer wants" : "racers want"} a
+            rematch
+          </span>
         )}
-        {!opponentReady && !requested && (
+        {!requested && readyCount === 0 && (
           <span>
             press <span className="text-fg-dim">enter</span> for rematch
           </span>
         )}
-        {requested && !opponentReady && (
-          <span>waiting on rival to click rematch</span>
+        {requested && waitingOn > 0 && (
+          <span>
+            waiting on {waitingOn}{" "}
+            {waitingOn === 1 ? "racer" : "racers"} to click rematch
+          </span>
         )}
-        {requested && opponentReady && (
-          <span className="text-accent">both ready · new race starting</span>
+        {requested && waitingOn === 0 && (
+          <span className="text-accent">everyone ready · new race starting</span>
         )}
       </div>
     </>
   );
 }
 
-/* -------------------- banner + results -------------------- */
-
-type Outcome = "win" | "lose" | "tie";
+/* -------------------- banner + helpers -------------------- */
 
 function interpretOutcome(
-  result: RaceResult,
-  role: PlayerRole | null
+  result: RaceResult | undefined,
+  seat: Seat | null
 ): Outcome {
-  if (result.outcome === "tie") return "tie";
-  if (result.outcome === "host_wins") {
-    return role === "host" ? "win" : "lose";
-  }
-  return role === "guest" ? "win" : "lose";
+  if (!result || seat === null) return "tie";
+  const me = result.players.find((player) => player.seat === seat);
+  if (!me) return "tie";
+  if (me.place !== 1) return "lose";
+  const sharedTop =
+    result.players.filter((player) => player.place === 1).length > 1;
+  return sharedTop ? "tie" : "win";
 }
 
 function reasonLabel(result: RaceResult, isWordSprint: boolean): string {
   if (isWordSprint) {
     return "one word sprint · fastest clean finish wins";
+  }
+  if (result.endReason === "cap") {
+    return "race hit its time cap · scored where everyone stood";
+  }
+  if (result.endReason === "disconnect") {
+    return "everyone left · scored where the race stopped";
   }
   if (result.endReason === "finish") {
     return "finish mode · final score balances speed and accuracy";
@@ -552,110 +770,51 @@ function reasonLabel(result: RaceResult, isWordSprint: boolean): string {
 
 function Banner({
   outcome,
+  place,
+  fieldSize,
   reason,
 }: {
   outcome: Outcome;
+  place: number | null;
+  fieldSize: number;
   reason: string;
 }) {
   const title =
-    outcome === "win"
-      ? "you win"
-      : outcome === "lose"
-      ? "you lose"
-      : "tie";
+    outcome === "win" ? "you win" : outcome === "lose" ? "you lose" : "tie";
 
   const color =
     outcome === "win"
       ? "text-accent"
       : outcome === "lose"
-      ? "text-opponent"
-      : "text-fg";
+        ? "text-opponent"
+        : "text-fg";
 
   return (
     <div className="flex flex-col items-center gap-2">
       <span className="text-[0.75rem] uppercase tracking-[0.25em] text-fg-dim">
         race over
       </span>
-      <h2 className={`text-5xl md:text-6xl font-medium ${color}`}>
-        {title}
-      </h2>
+      <h2 className={`text-5xl md:text-6xl font-medium ${color}`}>{title}</h2>
+      {fieldSize > 2 && place !== null && (
+        <span className="text-sm text-fg-dim">
+          {placeLabel(place)} of {fieldSize}
+        </span>
+      )}
       <span className="text-xs text-fg-dimmer mt-1">{reason}</span>
     </div>
   );
 }
 
-interface ResultColumnProps {
-  label: string;
-  color: "accent" | "opponent";
-  result: PlayerResult;
-  showFinishScore: boolean;
-  isWordSprint: boolean;
-  align: "left" | "right";
+function placeLabel(place: number): string {
+  if (place === 1) return "1st";
+  if (place === 2) return "2nd";
+  if (place === 3) return "3rd";
+  return `${place}th`;
 }
 
-function ResultColumn({
-  label,
-  color,
-  result,
-  showFinishScore,
-  isWordSprint,
-  align,
-}: ResultColumnProps) {
-  const textColor = color === "accent" ? "text-accent" : "text-opponent";
-  const dotColor = color === "accent" ? "bg-accent" : "bg-opponent";
-  const alignment = align === "right" ? "items-end text-right" : "items-start text-left";
-
-  return (
-    <div className={`flex flex-col ${alignment} gap-4`}>
-      <span className="text-[0.7rem] uppercase tracking-[0.2em] text-fg-dim flex items-center gap-1.5">
-        <span className={`inline-block size-1.5 rounded-full ${dotColor}`} />
-        {label}
-        {result.finishedPassage && (
-          <span className={`ml-1 text-[0.6rem] ${textColor}`}>
-            · finished
-          </span>
-        )}
-      </span>
-
-      <div className="flex items-baseline gap-2">
-        <span className={`text-5xl tabular-nums font-medium ${textColor}`}>
-          {isWordSprint ? formatSprintTime(result.elapsedMs) : result.wpm}
-        </span>
-        <span className="text-xs uppercase tracking-[0.15em] text-fg-dim">
-          {isWordSprint ? "time" : "wpm"}
-        </span>
-      </div>
-
-      <div className="flex flex-col gap-1 text-sm">
-        {showFinishScore && !isWordSprint && (
-          <Stat
-            label="score"
-            value={formatScore(finishModeScore(result))}
-          />
-        )}
-        {isWordSprint && <Stat label="wpm" value={`${result.wpm}`} />}
-        <Stat label="accuracy" value={`${result.accuracy}%`} />
-        {!isWordSprint && (
-          <Stat label="time" value={formatElapsed(result.elapsedMs)} />
-        )}
-        <Stat
-          label="chars"
-          value={`${result.correctCount}`}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex gap-2 justify-between min-w-[140px]">
-      <span className="text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
-        {label}
-      </span>
-      <span className="tabular-nums text-fg">{value}</span>
-    </div>
-  );
+function formatSprintTime(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
 }
 
 function finishModeScore(result: PlayerResult): number {

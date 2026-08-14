@@ -1,112 +1,29 @@
-const API_URL = process.env.API_URL ?? "http://localhost:8787";
-const WS_URL = process.env.WS_URL ?? API_URL.replace(/^http/, "ws");
-const TIMEOUT_MS = 8000;
-
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function createRoom() {
-  const res = await fetch(`${API_URL}/room`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      config: {
-        endMode: "time",
-        passageLength: "short",
-        timeLimit: 30,
-      },
-    }),
-  });
-  assert(res.ok, `create room failed: ${res.status}`);
-  return res.json();
-}
-
-function connectRoom(roomId, token) {
-  const url = new URL(
-    `${WS_URL}/room/${encodeURIComponent(roomId)}/ws`
-  );
-  if (token) url.searchParams.set("token", token);
-
-  const ws = new WebSocket(url);
-  const messages = [];
-  const waiters = [];
-
-  ws.addEventListener("message", (event) => {
-    const msg = JSON.parse(event.data);
-    messages.push(msg);
-    for (const waiter of [...waiters]) {
-      if (waiter.predicate(msg)) {
-        waiters.splice(waiters.indexOf(waiter), 1);
-        waiter.resolve(msg);
-      }
-    }
-  });
-
-  ws.addEventListener("close", (event) => {
-    for (const waiter of [...waiters]) {
-      waiters.splice(waiters.indexOf(waiter), 1);
-      waiter.reject(
-        new Error(`socket closed: ${event.code} ${event.reason}`)
-      );
-    }
-  });
-
-  function waitFor(predicate, label, timeoutMs = TIMEOUT_MS) {
-    const found = messages.find(predicate);
-    if (found) return Promise.resolve(found);
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        const idx = waiters.indexOf(waiter);
-        if (idx !== -1) waiters.splice(idx, 1);
-        reject(new Error(`timed out waiting for ${label}`));
-      }, timeoutMs);
-      const waiter = {
-        predicate,
-        resolve: (msg) => {
-          clearTimeout(timeout);
-          resolve(msg);
-        },
-        reject: (err) => {
-          clearTimeout(timeout);
-          reject(err);
-        },
-      };
-      waiters.push(waiter);
-    });
-  }
-
-  return {
-    ws,
-    messages,
-    waitFor,
-    send: (msg) => ws.send(JSON.stringify(msg)),
-    close: () => ws.close(),
-  };
-}
+import {
+  assert,
+  connectRoom,
+  createRoom,
+  requireWebSocket,
+  wait,
+} from "./lib/room-client.mjs";
 
 async function main() {
-  assert(
-    typeof WebSocket === "function",
-    "Node 22+ global WebSocket is required"
-  );
+  requireWebSocket();
 
-  const { roomId } = await createRoom();
+  const { roomId } = await createRoom({
+    endMode: "time",
+    passageLength: "short",
+    timeLimit: 30,
+    maxPlayers: 2,
+  });
   const host = connectRoom(roomId);
   const hostWelcome = await host.waitFor(
-    (msg) => msg.t === "welcome" && msg.role === "host",
+    (msg) => msg.t === "welcome" && msg.seat === 0 && msg.isHost,
     "host welcome"
   );
 
   const guest = connectRoom(roomId);
   const guestWelcome = await guest.waitFor(
-    (msg) => msg.t === "welcome" && msg.role === "guest",
+    (msg) => msg.t === "welcome" && msg.seat === 1,
     "guest welcome"
   );
 
@@ -179,17 +96,13 @@ async function main() {
 
   await spectator.waitFor(
     (msg) =>
-      msg.t === "player_progress" &&
-      msg.role === "host" &&
-      msg.pos === 5,
-    "host role-tagged progress"
+      msg.t === "player_progress" && msg.seat === 0 && msg.pos === 5,
+    "seat 0 progress"
   );
   await spectator.waitFor(
     (msg) =>
-      msg.t === "player_progress" &&
-      msg.role === "guest" &&
-      msg.pos === 3,
-    "guest role-tagged progress"
+      msg.t === "player_progress" && msg.seat === 1 && msg.pos === 3,
+    "seat 1 progress"
   );
 
   spectator.send({
@@ -202,7 +115,7 @@ async function main() {
   await wait(250);
   assert(
     !host.messages.some(
-      (msg) => msg.t === "opponent_progress" && msg.pos === 99
+      (msg) => msg.t === "player_progress" && msg.pos === 99
     ),
     "spectator progress should not reach players"
   );

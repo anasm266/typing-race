@@ -6,11 +6,15 @@ import { ReadyCheck } from "../components/ReadyCheck";
 import { SpectatorView } from "../components/SpectatorView";
 import { WaitingWarmup } from "../components/WaitingWarmup";
 import { trackEvent } from "../lib/analytics";
-import type {
-  PlayerRole,
-  PublicRoomState,
-  RoomConfig,
+import {
+  MIN_PLAYERS,
+  type ClientMsg,
+  type PlayerSlot,
+  type PublicRoomState,
+  type RoomConfig,
+  type Seat,
 } from "../lib/protocol";
+import { seatName, seatTheme } from "../lib/seats";
 import { formatCountdownMs, raceConfigSummary } from "../lib/raceLabels";
 import {
   canNativeShare,
@@ -33,12 +37,10 @@ function RoomSession({ roomId }: { roomId: string }) {
     connectionState,
     error,
     mode,
-    role,
-    opponentProgress,
-    opponentFinish,
-    opponentReaction,
-    spectatorProgress,
-    spectatorFinish,
+    seat,
+    isHost,
+    livePlayers,
+    reactions,
     send,
   } = useRoom(roomId);
 
@@ -54,16 +56,6 @@ function RoomSession({ roomId }: { roomId: string }) {
       <StatusScreen
         title="this room has expired"
         subtitle="the link is stale or the race already ended"
-        cta={{ label: "create your own", onClick: () => setLocation("/") }}
-      />
-    );
-  }
-
-  if (error === "room_full") {
-    return (
-      <StatusScreen
-        title="race already in progress"
-        subtitle="this room has two players already"
         cta={{ label: "create your own", onClick: () => setLocation("/") }}
       />
     );
@@ -100,38 +92,42 @@ function RoomSession({ roomId }: { roomId: string }) {
   }
 
   const reconnecting = connectionState === "reconnecting";
-  const disconnectedRival =
-    roomState.disconnected && roomState.disconnected.role !== role
-      ? roomState.disconnected
-      : null;
+  const droppedRivals =
+    roomState.status === "racing"
+      ? roomState.players.filter(
+          (player) => player.seat !== seat && !player.connected
+        )
+      : [];
 
   return (
     <div className="flex flex-col items-center gap-6 w-full">
       <Banners
         reconnecting={reconnecting}
-        disconnectedRival={disconnectedRival}
+        droppedRivals={droppedRivals}
+        mySeat={seat}
       />
-      {(roomState.playerCount >= 2 || mode === "spectator") && (
+      {(roomState.connectedCount >= MIN_PLAYERS || mode === "spectator") && (
         <WatchLinkButton roomId={roomId} />
       )}
       {mode === "spectator" ? (
-        <SpectatorView
-          room={roomState}
-          progress={spectatorProgress}
-          finish={spectatorFinish}
-        />
+        <SpectatorView room={roomState} livePlayers={livePlayers} />
       ) : roomState.status === "waiting" ? (
-        <WaitingLobby roomId={roomId} room={roomState} role={role} />
+        <WaitingLobby
+          roomId={roomId}
+          room={roomState}
+          seat={seat}
+          isHost={isHost}
+          send={send}
+        />
       ) : roomState.status === "ready_check" ? (
-        <ReadyCheck room={roomState} role={role} send={send} />
+        <ReadyCheck room={roomState} seat={seat} send={send} />
       ) : (
         <RaceView
           key={roomState.passage.id}
           room={roomState}
-          role={role}
-          opponentProgress={opponentProgress}
-          opponentFinish={opponentFinish}
-          opponentReaction={opponentReaction}
+          seat={seat}
+          livePlayers={livePlayers}
+          reactions={reactions}
           send={send}
           onNewRace={() => setLocation("/")}
         />
@@ -164,7 +160,7 @@ function WatchLinkButton({ roomId }: { roomId: string }) {
         {copied ? "watch invite copied" : "copy watch invite"}
       </button>
       <span className="text-[0.68rem] text-fg-dimmer">
-        same room link. extra visitors watch live without joining the race.
+        same room link. once the seats are taken, extra visitors watch live.
       </span>
     </div>
   );
@@ -172,41 +168,34 @@ function WatchLinkButton({ roomId }: { roomId: string }) {
 
 function Banners({
   reconnecting,
-  disconnectedRival,
+  droppedRivals,
+  mySeat,
 }: {
   reconnecting: boolean;
-  disconnectedRival: { graceUntil: number } | null;
+  droppedRivals: PlayerSlot[];
+  mySeat: Seat | null;
 }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!disconnectedRival) return;
-    const id = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(id);
-  }, [disconnectedRival]);
-
-  if (!reconnecting && !disconnectedRival) return null;
+  if (!reconnecting && droppedRivals.length === 0) return null;
 
   return (
     <div className="w-full max-w-[800px] flex flex-col gap-2">
       {reconnecting && (
         <div className="flex items-center justify-center gap-2 px-4 py-2 text-xs bg-bg-soft border border-border">
           <span className="inline-block size-1.5 rounded-full bg-accent animate-pulse" />
-          <span className="text-fg-dim">
-            reconnecting to the room...
-          </span>
+          <span className="text-fg-dim">reconnecting to the room...</span>
         </div>
       )}
-      {disconnectedRival && (
+      {droppedRivals.length > 0 && (
         <div className="flex items-center justify-center gap-2 px-4 py-2 text-xs bg-bg-soft border border-opponent/40">
           <span className="inline-block size-1.5 rounded-full bg-opponent animate-pulse" />
-          <span className="text-opponent">rival disconnected</span>
+          <span className="text-opponent">
+            {droppedRivals
+              .map((player) => seatName(player.seat, mySeat))
+              .join(", ")}{" "}
+            dropped
+          </span>
           <span className="text-fg-dim">
-            ·{" "}
-            {Math.max(
-              0,
-              Math.ceil((disconnectedRival.graceUntil - now) / 1000)
-            )}
-            s grace
+            · seat held, the race keeps going
           </span>
         </div>
       )}
@@ -242,17 +231,24 @@ function StatusScreen({
 function WaitingLobby({
   roomId,
   room,
-  role,
+  seat,
+  isHost,
+  send,
 }: {
   roomId: string;
   room: PublicRoomState;
-  role: PlayerRole | null;
+  seat: Seat | null;
+  isHost: boolean;
+  send: (msg: ClientMsg) => void;
 }) {
   const shareUrl = roomShareUrl(roomId);
   const inviteText = shareUrl;
   const inviteRef = useRef<HTMLInputElement>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const nativeShare = canNativeShare();
+
+  const seatsLeft = room.config.maxPlayers - room.players.length;
+  const canStartEarly = isHost && room.connectedCount >= MIN_PLAYERS;
 
   useEffect(() => {
     inviteRef.current?.focus();
@@ -293,18 +289,22 @@ function WaitingLobby({
         <div className="flex items-center gap-2 text-fg-dim">
           <span className="inline-block size-2 rounded-full bg-accent animate-pulse" />
           <span className="text-[0.75rem] uppercase tracking-[0.2em]">
-            waiting for opponent
+            {seatsLeft === 1
+              ? "waiting for 1 more"
+              : `waiting for ${seatsLeft} more`}
           </span>
         </div>
-        <h2 className="text-2xl mt-2">invite a friend</h2>
+        <h2 className="text-2xl mt-2">invite your friends</h2>
         <RaceConfigBadges config={room.config} />
-        {room.status === "waiting" && room.lobbyExpiresAt !== undefined && (
+        {room.lobbyExpiresAt !== undefined && (
           <LobbyExpiryCountdown
             expiresAt={room.lobbyExpiresAt}
             serverOffsetMs={room.serverOffsetMs ?? 0}
           />
         )}
       </div>
+
+      <SeatStrip room={room} mySeat={seat} />
 
       <div className="flex flex-col gap-4 w-full">
         <input
@@ -335,17 +335,26 @@ function WaitingLobby({
               share
             </button>
           )}
+          {canStartEarly && (
+            <button
+              onClick={() => send({ t: "start_race" })}
+              className="px-6 py-3 border border-ok text-ok text-sm hover:bg-ok hover:text-bg transition-colors"
+            >
+              start with {room.connectedCount}
+            </button>
+          )}
         </div>
 
         <div className="flex flex-col gap-2">
           <span className="text-xs text-fg-dimmer text-left sm:text-center">
-            paste the invite into discord, imessage, or reddit. first friend to
-            open it races you. after two racers join, the same link is a live
-            spectator view.
+            paste the invite into discord, imessage, or reddit. the race starts
+            on its own once every seat is taken
+            {isHost ? ", or start early whenever you like" : ""}. extra
+            visitors watch live.
           </span>
         </div>
 
-        {role === "host" && <WaitingWarmup />}
+        {isHost && <WaitingWarmup />}
       </div>
 
       <Link
@@ -358,6 +367,54 @@ function WaitingLobby({
   );
 }
 
+function SeatStrip({
+  room,
+  mySeat,
+}: {
+  room: PublicRoomState;
+  mySeat: Seat | null;
+}) {
+  const slots = Array.from({ length: room.config.maxPlayers }, (_, index) =>
+    room.players.find((player) => player.seat === index)
+  );
+
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      {slots.map((player, index) => {
+        const theme = seatTheme(index);
+        if (!player) {
+          return (
+            <span
+              key={index}
+              className="flex items-center gap-2 border border-dashed border-border px-3 py-1.5 text-[0.65rem] uppercase tracking-[0.15em] text-fg-dimmer"
+            >
+              <span className="inline-block size-1.5 rounded-full bg-fg-dimmer animate-pulse" />
+              open
+            </span>
+          );
+        }
+        return (
+          <span
+            key={index}
+            className={`seat-chip flex items-center gap-2 border ${theme.borderSoft} px-3 py-1.5 text-[0.65rem] uppercase tracking-[0.15em] ${theme.text}`}
+          >
+            <span
+              className={`inline-block size-1.5 rounded-full ${theme.bg}`}
+              aria-hidden
+            />
+            {seatName(player.seat, mySeat)}
+            {player.isHost && (
+              <span className="text-fg-dimmer normal-case tracking-normal">
+                host
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function RaceConfigBadges({ config }: { config: RoomConfig }) {
   const summary = raceConfigSummary(config);
   const [length, mode] = summary.split(" · ");
@@ -366,6 +423,7 @@ function RaceConfigBadges({ config }: { config: RoomConfig }) {
     <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
       <ConfigBadge label={length} tone="accent" />
       <ConfigBadge label={mode} tone="muted" />
+      <ConfigBadge label={`${config.maxPlayers} racers`} tone="muted" />
     </div>
   );
 }
@@ -383,9 +441,7 @@ function ConfigBadge({
       : "border-border text-fg-dim";
   return (
     <span
-      className={
-        `border px-2 py-0.5 text-[0.62rem] uppercase tracking-[0.16em] ${classes}`
-      }
+      className={`border px-2 py-0.5 text-[0.62rem] uppercase tracking-[0.16em] ${classes}`}
     >
       {label}
     </span>

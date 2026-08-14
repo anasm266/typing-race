@@ -74,6 +74,7 @@ export default function () {
         endMode: "time",
         timeLimit: TIME_LIMIT_S,
         passageLength: "short",
+        maxPlayers: 2,
       },
     }),
     { headers: { "Content-Type": "application/json" } }

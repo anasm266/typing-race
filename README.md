@@ -1,8 +1,8 @@
 # typing-race
 
-Real-time 2-player typing races built around one idea: sharing the link is the product.
+Real-time typing races for 2-4 players, built around one idea: sharing the link is the product.
 
-Open a room, send it to a friend, and race immediately. No accounts, no lobby browsing, no queue. The project is hosted on Cloudflare's free tier and is meant to be both a usable game and a portfolio piece that shows real-time systems work, WebSocket state sync, and production-minded polish.
+Open a room, send it to your friends, and race immediately. No accounts, no lobby browsing, no queue. The project is hosted on Cloudflare's free tier and is meant to be both a usable game and a portfolio piece that shows real-time systems work, WebSocket state sync, and production-minded polish.
 
 - Live app: [typing-race.pages.dev](https://typing-race.pages.dev)
 - Recent races: [typing-race.pages.dev/recent](https://typing-race.pages.dev/recent)
@@ -21,20 +21,22 @@ Create a room, share the link, wait for your rival to lock in, race, then compar
 
 ### Live spectator mode
 
-After two racers join, anyone else opening the same room link gets a watch-only live view.
+Once every seat is taken, anyone else opening the same room link gets a watch-only live view.
 
 ![Spectator mode demo](docs/assets/demo-spectator.gif)
 
 ## What it does
 
-- Creates a shareable room URL instantly
-- Drops the second player straight into the race flow
+- Creates a shareable room URL instantly, sized for 2, 3, or 4 racers
+- Drops joiners straight into the race flow, auto-starting once every seat fills
+- Lets the host start early with whoever has already arrived
 - Runs synchronized countdowns and live cursor/WPM updates over WebSockets
 - Lets extra room-link visitors spectate live without taking a racer slot
 - Supports both finish-passage mode and time-limit mode
-- Shows post-race results with a WPM-over-time graph
+- Shows post-race results with ranked standings and a WPM-over-time graph
 - Allows rematches without re-sharing the room
-- Handles reconnects, disconnect grace periods, and room expiry
+- Holds a dropped racer's seat so they can rejoin mid-race where they left off
+- Handles reconnects, room expiry, and a hard cap so a race can never hang open
 - Includes lightweight social UX with tap-only reaction toasts
 - Publishes a public recent-races page backed by D1
 - Tracks room funnel analytics like creates, joins, starts, completions, and pre-start drop-offs

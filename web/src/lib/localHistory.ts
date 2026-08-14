@@ -22,8 +22,12 @@ export interface LocalHistoryEntry {
   elapsedMs: number;
   correctChars: number;
   totalKeystrokes?: number;
+  /** Best rival result in the race, for the two-player summary line. */
   opponentWpm?: number;
   opponentAccuracy?: number;
+  /** 1-based finishing position; only set for races with 3+ racers. */
+  place?: number;
+  playerCount?: number;
 }
 
 type NewLocalHistoryEntry = Omit<

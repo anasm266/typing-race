@@ -1,8 +1,4 @@
-import type {
-  ParticipantKind,
-  PlayerRole,
-  RoomSource,
-} from "./protocol";
+import type { ParticipantKind, RoomSource } from "./protocol";
 
 export interface AnalyticsEnv {
   DB: D1Database;
@@ -53,7 +49,8 @@ export interface AnalyticsEventInput {
   eventAt?: number;
   roomId?: string | null;
   participantKind?: ParticipantKind | null;
-  playerRole?: PlayerRole | null;
+  /** Seat label: "host" (seat 0), "guest" (seat 1), or "seat_N". */
+  playerRole?: string | null;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -305,8 +302,9 @@ function cleanParticipantKind(value: unknown): ParticipantKind | null {
   return value === "player" || value === "spectator" ? value : null;
 }
 
-function cleanPlayerRole(value: unknown): PlayerRole | null {
-  return value === "host" || value === "guest" ? value : null;
+function cleanPlayerRole(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return /^(host|guest|seat_\d{1,2})$/.test(value) ? value : null;
 }
 
 function cfString(value: unknown): string | null {

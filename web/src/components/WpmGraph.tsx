@@ -9,46 +9,38 @@ import {
 } from "recharts";
 import type { WpmSample } from "../lib/wpm";
 
+export interface WpmSeries {
+  /** Stable key within the chart. */
+  id: string;
+  name: string;
+  color: string;
+  samples: WpmSample[];
+}
+
 interface WpmGraphProps {
-  mySamples: WpmSample[];
-  opponentSamples: WpmSample[];
+  series: WpmSeries[];
   raceDurationSec: number;
 }
 
-interface Point {
-  t: number;
-  you?: number;
-  rival?: number;
-}
+type Point = { t: number } & Record<string, number>;
 
-function mergeSamples(
-  mine: WpmSample[],
-  theirs: WpmSample[]
-): Point[] {
+function mergeSeries(series: WpmSeries[]): Point[] {
   const map = new Map<number, Point>();
 
-  for (const s of mine) {
-    const key = Math.round(s.t);
-    const existing = map.get(key) ?? { t: key };
-    existing.you = s.wpm;
-    map.set(key, existing);
-  }
-  for (const s of theirs) {
-    const key = Math.round(s.t);
-    const existing = map.get(key) ?? { t: key };
-    existing.rival = s.wpm;
-    map.set(key, existing);
+  for (const line of series) {
+    for (const sample of line.samples) {
+      const key = Math.round(sample.t);
+      const existing = map.get(key) ?? ({ t: key } as Point);
+      existing[line.id] = sample.wpm;
+      map.set(key, existing);
+    }
   }
 
   return Array.from(map.values()).sort((a, b) => a.t - b.t);
 }
 
-export function WpmGraph({
-  mySamples,
-  opponentSamples,
-  raceDurationSec,
-}: WpmGraphProps) {
-  const data = mergeSamples(mySamples, opponentSamples);
+export function WpmGraph({ series, raceDurationSec }: WpmGraphProps) {
+  const data = mergeSeries(series);
 
   if (data.length < 2) {
     return (
@@ -65,7 +57,9 @@ export function WpmGraph({
 
   const maxWpm = Math.max(
     1,
-    ...data.map((d) => Math.max(d.you ?? 0, d.rival ?? 0))
+    ...data.flatMap((point) =>
+      series.map((line) => point[line.id] ?? 0)
+    )
   );
   const yMax = Math.ceil(maxWpm * 1.15);
   const xMax = Math.max(1, Math.ceil(raceDurationSec));
@@ -116,37 +110,31 @@ export function WpmGraph({
             itemStyle={{ padding: 0 }}
             cursor={{ stroke: "var(--color-border)", strokeWidth: 1 }}
           />
-          <Line
-            type="monotone"
-            dataKey="you"
-            name="you"
-            stroke="var(--color-accent)"
-            strokeWidth={2}
-            dot={false}
-            connectNulls
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="rival"
-            name="rival"
-            stroke="var(--color-opponent)"
-            strokeWidth={2}
-            dot={false}
-            connectNulls
-            isAnimationActive={false}
-          />
+          {series.map((line) => (
+            <Line
+              key={line.id}
+              type="monotone"
+              dataKey={line.id}
+              name={line.name}
+              stroke={line.color}
+              strokeWidth={2}
+              dot={false}
+              connectNulls
+              isAnimationActive={false}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
-      <div className="flex gap-6 text-[0.7rem] uppercase tracking-[0.15em] text-fg-dim">
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block size-1.5 rounded-full bg-accent" />
-          you
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block size-1.5 rounded-full bg-opponent" />
-          rival
-        </span>
+      <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-[0.7rem] uppercase tracking-[0.15em] text-fg-dim">
+        {series.map((line) => (
+          <span key={line.id} className="flex items-center gap-1.5">
+            <span
+              className="inline-block size-1.5 rounded-full"
+              style={{ background: line.color }}
+            />
+            {line.name}
+          </span>
+        ))}
       </div>
     </div>
   );

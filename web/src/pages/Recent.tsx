@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "wouter";
 import { WORKER_URL } from "../lib/api";
+import { seatTheme } from "../lib/seats";
+
+interface RecentRacePlayer {
+  seat: number;
+  place: number;
+  wpm: number;
+  accuracy: number;
+  elapsedMs: number;
+  correctChars: number;
+  finished: boolean;
+  dnf: boolean;
+}
 
 interface RecentRace {
   id: string;
   finished_at: number;
-  end_reason: "finish" | "time_up" | "disconnect";
-  outcome: "host_wins" | "guest_wins" | "tie";
+  end_reason: "finish" | "time_up" | "disconnect" | "cap";
+  outcome: string;
   passage_id: string;
   passage_length: string;
   passage_words: number;
@@ -17,6 +29,9 @@ interface RecentRace {
   guest_accuracy: number;
   host_finished: number;
   guest_finished: number;
+  player_count: number;
+  winner_seat: number | null;
+  players?: RecentRacePlayer[];
 }
 
 type Status =
@@ -107,9 +122,8 @@ export function Recent() {
 }
 
 function RaceRow({ race }: { race: RecentRace }) {
-  const hostWon = race.outcome === "host_wins";
-  const guestWon = race.outcome === "guest_wins";
   const tie = race.outcome === "tie";
+  const players = seatsFor(race);
 
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-4 py-3">
@@ -117,20 +131,19 @@ function RaceRow({ race }: { race: RecentRace }) {
         {timeAgo(race.finished_at)}
       </span>
 
-      <div className="flex items-center gap-3 font-mono text-sm">
-        <PlayerCell
-          label="host"
-          wpm={race.host_wpm}
-          winner={hostWon}
-          tie={tie}
-        />
-        <span className="text-fg-dimmer">vs</span>
-        <PlayerCell
-          label="guest"
-          wpm={race.guest_wpm}
-          winner={guestWon}
-          tie={tie}
-        />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm">
+        {players.map((player, index) => (
+          <span key={player.seat} className="flex items-center gap-3">
+            {index > 0 && <span className="text-fg-dimmer">vs</span>}
+            <PlayerCell
+              seat={player.seat}
+              wpm={player.wpm}
+              winner={player.place === 1 && !player.dnf && !tie}
+              tie={tie}
+              dnf={player.dnf}
+            />
+          </span>
+        ))}
       </div>
 
       <div className="flex flex-col items-end text-[0.65rem] uppercase tracking-[0.15em] text-fg-dim">
@@ -146,23 +159,59 @@ function RaceRow({ race }: { race: RecentRace }) {
   );
 }
 
+/** Older rows predate race_players, so fall back to the seat 0/1 columns. */
+function seatsFor(race: RecentRace): RecentRacePlayer[] {
+  if (race.players && race.players.length > 0) return race.players;
+
+  const hostWon = race.outcome === "host_wins";
+  const guestWon = race.outcome === "guest_wins";
+  return [
+    {
+      seat: 0,
+      place: guestWon ? 2 : 1,
+      wpm: race.host_wpm,
+      accuracy: race.host_accuracy,
+      elapsedMs: race.duration_ms,
+      correctChars: 0,
+      finished: race.host_finished === 1,
+      dnf: false,
+    },
+    {
+      seat: 1,
+      place: hostWon ? 2 : 1,
+      wpm: race.guest_wpm,
+      accuracy: race.guest_accuracy,
+      elapsedMs: race.duration_ms,
+      correctChars: 0,
+      finished: race.guest_finished === 1,
+      dnf: false,
+    },
+  ];
+}
+
 function PlayerCell({
+  seat,
   wpm,
   winner,
   tie,
+  dnf,
 }: {
-  label: string;
+  seat: number;
   wpm: number;
   winner: boolean;
   tie: boolean;
+  dnf: boolean;
 }) {
-  const color = winner
-    ? "text-accent"
-    : tie
-    ? "text-fg"
-    : "text-fg-dim";
+  const theme = seatTheme(seat);
+  const color = winner ? theme.text : tie ? "text-fg" : "text-fg-dim";
   return (
     <div className="flex items-baseline gap-1 min-w-[72px]">
+      <span
+        className={`inline-block size-1.5 rounded-full self-center ${theme.bg} ${
+          dnf ? "opacity-40" : ""
+        }`}
+        aria-hidden
+      />
       <span className={`tabular-nums text-base ${color}`}>{wpm}</span>
       <span className="text-[0.6rem] uppercase tracking-[0.15em] text-fg-dimmer">
         wpm
@@ -204,5 +253,7 @@ function endReasonLabel(reason: RecentRace["end_reason"]): string {
       return "timeout";
     case "disconnect":
       return "forfeit";
+    case "cap":
+      return "time cap";
   }
 }

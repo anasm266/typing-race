@@ -7,9 +7,9 @@ import {
 import type {
   ClientMsg,
   ParticipantKind,
-  PlayerRole,
   PublicRoomState,
   ReactionKey,
+  Seat,
   ServerMsg,
 } from "../lib/protocol";
 
@@ -19,28 +19,23 @@ export type ConnectionState =
   | "reconnecting"
   | "closed";
 
-export interface OpponentProgress {
+/** Live typing state for one seat, updated between state broadcasts. */
+export interface PlayerLive {
+  seat: Seat;
   pos: number;
   correctCount: number;
   wpm: number;
   accuracy: number;
+  finished: boolean;
+  finishElapsedMs?: number;
 }
 
-export type SpectatorProgress = Partial<Record<PlayerRole, OpponentProgress>>;
-export type SpectatorFinish = Partial<Record<PlayerRole, OpponentFinish>>;
+export type LivePlayers = Record<number, PlayerLive>;
 
-export interface OpponentFinish {
-  wpm: number;
-  accuracy: number;
-  elapsedMs: number;
-}
-
-export interface OpponentReaction {
+export interface ReactionEvent {
+  id: number;
+  seat: Seat;
   key: ReactionKey;
-  from: PlayerRole;
-  /** monotonically increasing id so repeated identical reactions still
-   *  trigger a fresh toast render */
-  at: number;
 }
 
 export interface UseRoomResult {
@@ -48,42 +43,70 @@ export interface UseRoomResult {
   connectionState: ConnectionState;
   error: string | null;
   mode: ParticipantKind | null;
-  role: PlayerRole | null;
-  opponentProgress: OpponentProgress | null;
-  opponentFinish: OpponentFinish | null;
-  opponentReaction: OpponentReaction | null;
-  spectatorProgress: SpectatorProgress;
-  spectatorFinish: SpectatorFinish;
+  seat: Seat | null;
+  isHost: boolean;
+  livePlayers: LivePlayers;
+  /** Append-only, capped. Consumers track which ids they've shown. */
+  reactions: ReactionEvent[];
   send: (msg: ClientMsg) => void;
 }
 
 const MAX_RETRIES = 4;
 const RETRY_DELAYS_MS = [500, 1500, 3000, 5000];
+const REACTION_BUFFER = 8;
+
+function emptyLive(seat: Seat): PlayerLive {
+  return {
+    seat,
+    pos: 0,
+    correctCount: 0,
+    wpm: 0,
+    accuracy: 100,
+    finished: false,
+  };
+}
 
 export function useRoom(roomId: string): UseRoomResult {
-  const [roomState, setRoomState] = useState<PublicRoomState | null>(
-    null
-  );
+  const [roomState, setRoomState] = useState<PublicRoomState | null>(null);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ParticipantKind | null>(null);
-  const [role, setRole] = useState<PlayerRole | null>(null);
-  const [opponentProgress, setOpponentProgress] =
-    useState<OpponentProgress | null>(null);
-  const [opponentFinish, setOpponentFinish] =
-    useState<OpponentFinish | null>(null);
-  const [opponentReaction, setOpponentReaction] =
-    useState<OpponentReaction | null>(null);
-  const [spectatorProgress, setSpectatorProgress] =
-    useState<SpectatorProgress>({});
-  const [spectatorFinish, setSpectatorFinish] =
-    useState<SpectatorFinish>({});
+  const [seat, setSeat] = useState<Seat | null>(null);
+  const [isHost, setIsHost] = useState(false);
+  const [livePlayers, setLivePlayers] = useState<LivePlayers>({});
+  const [reactions, setReactions] = useState<ReactionEvent[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
   const retryTimeoutRef = useRef<number | null>(null);
   const unmountedRef = useRef(false);
+
+  // Progress arrives per keystroke from up to three rivals at once. Buffer
+  // it in a ref and publish once per frame so the passage doesn't re-render
+  // on every inbound message.
+  const liveRef = useRef<LivePlayers>({});
+  const flushHandleRef = useRef<number | null>(null);
+  const reactionSeqRef = useRef(0);
+
+  const flushLive = useCallback(() => {
+    flushHandleRef.current = null;
+    setLivePlayers({ ...liveRef.current });
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (flushHandleRef.current !== null) return;
+    flushHandleRef.current = window.requestAnimationFrame(flushLive);
+  }, [flushLive]);
+
+  const resetLive = useCallback(() => {
+    liveRef.current = {};
+    if (flushHandleRef.current !== null) {
+      window.cancelAnimationFrame(flushHandleRef.current);
+      flushHandleRef.current = null;
+    }
+    setLivePlayers({});
+  }, []);
 
   useEffect(() => {
     unmountedRef.current = false;
@@ -113,12 +136,14 @@ export function useRoom(roomId: string): UseRoomResult {
         switch (msg.t) {
           case "welcome":
             setMode("player");
-            setRole(msg.role);
+            setSeat(msg.seat);
+            setIsHost(msg.isHost);
             setSessionToken(roomId, msg.sessionToken);
             return;
           case "spectator_welcome":
             setMode("spectator");
-            setRole(null);
+            setSeat(null);
+            setIsHost(false);
             return;
           case "state":
             setRoomState({
@@ -132,60 +157,54 @@ export function useRoom(roomId: string): UseRoomResult {
               msg.room.status === "starting" ||
               msg.room.status === "waiting"
             ) {
-              setOpponentProgress(null);
-              setOpponentFinish(null);
-              setSpectatorProgress({});
-              setSpectatorFinish({});
+              resetLive();
             }
             return;
           case "error":
             setError(msg.code);
             return;
-          case "opponent_progress":
-            setOpponentProgress({
-              pos: msg.pos,
-              correctCount: msg.correctCount,
-              wpm: msg.wpm,
-              accuracy: msg.accuracy,
-            });
-            return;
-          case "opponent_finished":
-            setOpponentFinish({
-              wpm: msg.wpm,
-              accuracy: msg.accuracy,
-              elapsedMs: msg.elapsedMs,
-            });
-            return;
-          case "player_progress":
-            setSpectatorProgress((current) => ({
-              ...current,
-              [msg.role]: {
+          case "player_progress": {
+            const current = liveRef.current[msg.seat] ?? emptyLive(msg.seat);
+            liveRef.current = {
+              ...liveRef.current,
+              [msg.seat]: {
+                ...current,
                 pos: msg.pos,
                 correctCount: msg.correctCount,
                 wpm: msg.wpm,
                 accuracy: msg.accuracy,
               },
-            }));
+            };
+            scheduleFlush();
             return;
-          case "player_finished":
-            setSpectatorFinish((current) => ({
-              ...current,
-              [msg.role]: {
+          }
+          case "player_finished": {
+            const current = liveRef.current[msg.seat] ?? emptyLive(msg.seat);
+            liveRef.current = {
+              ...liveRef.current,
+              [msg.seat]: {
+                ...current,
                 wpm: msg.wpm,
                 accuracy: msg.accuracy,
-                elapsedMs: msg.elapsedMs,
+                finished: true,
+                finishElapsedMs: msg.elapsedMs,
               },
-            }));
+            };
+            scheduleFlush();
             return;
-          case "opponent_reaction":
-            setOpponentReaction({
+          }
+          case "player_reaction": {
+            reactionSeqRef.current += 1;
+            const event: ReactionEvent = {
+              id: reactionSeqRef.current,
+              seat: msg.seat,
               key: msg.key,
-              from: msg.from,
-              at: Date.now(),
-            });
+            };
+            setReactions((current) =>
+              [...current, event].slice(-REACTION_BUFFER)
+            );
             return;
-          case "peer_joined":
-          case "peer_left":
+          }
           case "pong":
             return;
         }
@@ -200,30 +219,18 @@ export function useRoom(roomId: string): UseRoomResult {
           setConnectionState("closed");
           return;
         }
-        if (
-          ev.code === 4010 ||
-          ev.reason?.includes("spectator_full")
-        ) {
+        if (ev.code === 4010 || ev.reason?.includes("spectator_full")) {
           setError("spectator_full");
-          setConnectionState("closed");
-          return;
-        }
-        if (ev.code === 4009 || ev.reason?.includes("room_full")) {
-          setError("room_full");
           setConnectionState("closed");
           return;
         }
 
         // Reconnect with backoff.
         if (retryCountRef.current < MAX_RETRIES) {
-          const delay =
-            RETRY_DELAYS_MS[retryCountRef.current] ?? 5000;
+          const delay = RETRY_DELAYS_MS[retryCountRef.current] ?? 5000;
           retryCountRef.current += 1;
           setConnectionState("reconnecting");
-          retryTimeoutRef.current = window.setTimeout(
-            connect,
-            delay
-          );
+          retryTimeoutRef.current = window.setTimeout(connect, delay);
         } else {
           setConnectionState("closed");
           setError("connection_lost");
@@ -244,13 +251,17 @@ export function useRoom(roomId: string): UseRoomResult {
         window.clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
       }
+      if (flushHandleRef.current !== null) {
+        window.cancelAnimationFrame(flushHandleRef.current);
+        flushHandleRef.current = null;
+      }
       try {
         wsRef.current?.close();
       } catch {
         // ignore
       }
     };
-  }, [roomId]);
+  }, [roomId, resetLive, scheduleFlush]);
 
   const send = useCallback((msg: ClientMsg) => {
     const ws = wsRef.current;
@@ -263,12 +274,10 @@ export function useRoom(roomId: string): UseRoomResult {
     connectionState,
     error,
     mode,
-    role,
-    opponentProgress,
-    opponentFinish,
-    opponentReaction,
-    spectatorProgress,
-    spectatorFinish,
+    seat,
+    isHost,
+    livePlayers,
+    reactions,
     send,
   };
 }
