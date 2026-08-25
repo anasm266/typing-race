@@ -14,11 +14,11 @@ async function testMalformedProgress() {
     maxPlayers: 2,
   });
   const host = connectRoom(roomId);
-  const guest = connectRoom(roomId);
   const hostWelcome = await host.waitFor(
     (msg) => msg.t === "welcome",
     "host welcome"
   );
+  const guest = connectRoom(roomId);
   const guestWelcome = await guest.waitFor(
     (msg) => msg.t === "welcome",
     "guest welcome"
