@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/cloudflare";
 import { Room as RoomClass } from "./room";
+import { sentryOptions } from "./sentry";
 import { pickPassage } from "./passages";
 import {
   DEFAULT_CONFIG,
@@ -21,19 +22,15 @@ import {
 } from "./analytics";
 
 export const Room = Sentry.instrumentDurableObjectWithSentry(
-  (env: Env) => ({
-    dsn: env.SENTRY_DSN,
-    tracesSampleRate: 0.1,
-    sendDefaultPii: false,
-    environment: "production",
-  }),
+  (env: Env) => sentryOptions(env),
   RoomClass
 );
 
 export interface Env {
   ROOM: DurableObjectNamespace<RoomClass>;
   DB: D1Database;
-  SENTRY_DSN: string;
+  SENTRY_DSN?: string;
+  SENTRY_ENVIRONMENT?: string;
   ADMIN_ANALYTICS_TOKEN?: string;
   ANALYTICS_IP_HASH_SALT?: string;
   ROOM_CREATE_RATE_LIMITER: RateLimit;
@@ -318,12 +315,7 @@ const handler = {
 } satisfies ExportedHandler<Env>;
 
 export default Sentry.withSentry(
-  (env: Env) => ({
-    dsn: env.SENTRY_DSN,
-    tracesSampleRate: 0.1,
-    sendDefaultPii: false,
-    environment: "production",
-  }),
+  (env: Env) => sentryOptions(env),
   handler
 );
 
@@ -333,7 +325,8 @@ async function handleCreateRoom(
 ): Promise<Response> {
   let body: CreateRoomRequest = {};
   try {
-    body = (await request.json()) as CreateRoomRequest;
+    const parsed = await request.json<unknown>();
+    if (isRecord(parsed)) body = parsed as CreateRoomRequest;
   } catch {
     // empty body OK
   }
@@ -397,30 +390,41 @@ async function handleClientEvents(
   request: Request,
   env: Env
 ): Promise<Response> {
+  await maybeCleanupAnalyticsEvents(env);
+
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (contentLength > 20_000) {
+    return json({ error: "payload_too_large" }, 413);
+  }
+
+  const text = await request.text();
+  if (text.length > 20_000) {
+    return json({ error: "payload_too_large" }, 413);
+  }
+
+  let payload: unknown;
   try {
-    await maybeCleanupAnalyticsEvents(env);
+    payload = JSON.parse(text) as unknown;
+  } catch {
+    return json({ error: "invalid_events" }, 400);
+  }
 
-    const contentLength = Number(request.headers.get("content-length") ?? 0);
-    if (contentLength > 20_000) {
-      return json({ error: "payload_too_large" }, 413);
-    }
+  if (!isRecord(payload) || !Array.isArray(payload.events)) {
+    return json({ error: "invalid_events" }, 400);
+  }
+  if (payload.events.length > 10) {
+    return json({ error: "too_many_events" }, 413);
+  }
 
-    const text = await request.text();
-    if (text.length > 20_000) {
-      return json({ error: "payload_too_large" }, 413);
-    }
-
-    const payload = JSON.parse(text) as { events?: ClientAnalyticsEvent[] };
-    if (!Array.isArray(payload.events)) {
-      return json({ error: "invalid_events" }, 400);
-    }
-    if (payload.events.length > 10) {
-      return json({ error: "too_many_events" }, 413);
-    }
-
+  try {
     let accepted = 0;
     let ignored = 0;
-    for (const event of payload.events) {
+    for (const rawEvent of payload.events) {
+      if (!isRecord(rawEvent)) {
+        ignored += 1;
+        continue;
+      }
+      const event = rawEvent as ClientAnalyticsEvent;
       if (!isClientAnalyticsEventName(event.event)) {
         ignored += 1;
         continue;
@@ -453,7 +457,7 @@ async function handleClientEvents(
     return json({ ok: true, accepted, ignored });
   } catch (err) {
     Sentry.captureException(err);
-    return json({ error: "invalid_events" }, 400);
+    return json({ error: "events_unavailable" }, 503);
   }
 }
 
@@ -850,6 +854,10 @@ function percentage(numerator: number, denominator: number): number {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function numberValue(value: unknown): number | undefined {

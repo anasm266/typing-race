@@ -9,7 +9,7 @@
  *   k6 run load-tests/ws-rooms.js
  *
  * Usage (Docker, no local install needed):
- *   docker run --rm -i grafana/k6 run --vus 50 --duration 60s - < load-tests/ws-rooms.js
+ *   docker run --rm -i grafana/k6 run - < load-tests/ws-rooms.js
  *
  * Env vars:
  *   API_URL  HTTP origin of the Worker (default: local worker)
@@ -27,7 +27,10 @@ const API_URL = __ENV.API_URL || "http://localhost:8787";
 const WS_URL = __ENV.WS_URL || "ws://localhost:8787";
 
 const TIME_LIMIT_S = 30;
-const ROOM_TIMEOUT_MS = 45_000;
+// Allow room alarms some scheduling headroom under a full concurrent burst.
+// The race itself is 30s plus a 3s countdown; this timeout is a failure
+// backstop, not the expected completion time.
+const ROOM_TIMEOUT_MS = 75_000;
 const CLOSE_AFTER_END_MS = 250;
 const PING_INTERVAL_MS = 1_000;
 const PROGRESS_INTERVAL_MS = 1_000;
@@ -44,15 +47,14 @@ const raceEndedOk = new Rate("race_ended_ok");
 
 export const options = {
   scenarios: {
-    ramp_concurrent_rooms: {
-      executor: "ramping-vus",
-      startVUs: 0,
-      stages: [
-        { duration: "20s", target: 25 },
-        { duration: "30s", target: 25 },
-        { duration: "10s", target: 0 },
-      ],
-      gracefulRampDown: "45s",
+    concurrent_rooms: {
+      // One room per VU. A looping/ramping executor can start a second room
+      // too late for its 30-second race to finish, producing false failures
+      // when the scenario deadline interrupts otherwise healthy sessions.
+      executor: "per-vu-iterations",
+      vus: 25,
+      iterations: 1,
+      maxDuration: "90s",
     },
   },
   thresholds: {
@@ -217,6 +219,9 @@ function maybeLockIn(session) {
 function handleRoomState(session, room) {
   if (room.status === "racing") {
     recordRaceStarted(session, true);
+    const passageLength = room.passage.text.length;
+    session.host.maxProgress = passageLength;
+    session.guest.maxProgress = passageLength;
     startProgress(session.host);
     startProgress(session.guest);
     return;
@@ -242,7 +247,10 @@ function startProgress(player) {
 }
 
 function sendProgress(player) {
-  player.progressPos += player.progressStep;
+  player.progressPos = Math.min(
+    player.progressPos + player.progressStep,
+    player.maxProgress
+  );
   sendJson(player, {
     t: "progress",
     pos: player.progressPos,

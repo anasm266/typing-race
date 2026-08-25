@@ -55,7 +55,7 @@
     }
   ],
   "vars": {
-    "SENTRY_DSN": "https://40ba518570ae0f5e78dc521b123e7afc@o4511239705264128.ingest.us.sentry.io/4511239724924928"
+    "SENTRY_ENVIRONMENT": "production"
   },
   "env": {
     "k6": {
@@ -108,7 +108,7 @@
         }
       ],
       "vars": {
-        "SENTRY_DSN": "https://40ba518570ae0f5e78dc521b123e7afc@o4511239705264128.ingest.us.sentry.io/4511239724924928"
+        "SENTRY_ENVIRONMENT": "k6"
       }
     }
   }

@@ -161,14 +161,11 @@ export type ClientMsg =
       t: "progress";
       pos: number;
       correctCount: number;
-      wpm: number;
       accuracy: number;
     }
   | {
       t: "finished";
-      wpm: number;
       accuracy: number;
-      elapsedMs: number;
       correctCount: number;
     }
   | { t: "rematch_request" }

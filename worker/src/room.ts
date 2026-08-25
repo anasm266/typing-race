@@ -29,11 +29,16 @@ import {
   safeInsertAnalyticsEvent,
   type AnalyticsContext,
 } from "./analytics";
+import {
+  decodeClientMessage,
+  INVALID_MESSAGE_CODE,
+} from "./client-message";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
   DB: D1Database;
-  SENTRY_DSN: string;
+  SENTRY_DSN?: string;
+  SENTRY_ENVIRONMENT?: string;
   ADMIN_ANALYTICS_TOKEN?: string;
   ANALYTICS_IP_HASH_SALT?: string;
   ROOM_CREATE_RATE_LIMITER: RateLimit;
@@ -99,6 +104,44 @@ interface InternalState extends StoredPublic {
 
 function zeroProgress(): PlayerProgress {
   return { pos: 0, correctCount: 0, wpm: 0, accuracy: 100, at: 0 };
+}
+
+function finiteNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, value))
+    : fallback;
+}
+
+function finiteInteger(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  return Math.round(finiteNumber(value, fallback, min, max));
+}
+
+function sanitizeProgress(
+  value: unknown,
+  passageLength: number
+): PlayerProgress {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return zeroProgress();
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    pos: finiteInteger(raw.pos, 0, 0, passageLength),
+    correctCount: finiteInteger(raw.correctCount, 0, 0, passageLength),
+    wpm: finiteInteger(raw.wpm, 0, 0, 1_000_000),
+    accuracy:
+      Math.round(finiteNumber(raw.accuracy, 100, 0, 100) * 10) / 10,
+    at: finiteInteger(raw.at, 0, 0, Number.MAX_SAFE_INTEGER),
+  };
 }
 
 /** Close code used when the server deliberately replaces a WS for the same seat. */
@@ -184,7 +227,51 @@ function migrateStoredState(raw: unknown): InternalState | null {
     maxPlayers: normalizeMaxPlayers(state.config.maxPlayers),
   } as RoomConfig;
 
+  const passageLength =
+    typeof state.passage?.text === "string" ? state.passage.text.length : 0;
+
   if (Array.isArray(state._players)) {
+    state._players = state._players
+      .filter(
+        (player): player is PlayerInternal =>
+          Boolean(player) &&
+          typeof player === "object" &&
+          Number.isInteger(player.seat) &&
+          player.seat >= 0 &&
+          player.seat < state.config.maxPlayers &&
+          typeof player.sessionToken === "string" &&
+          player.sessionToken.length > 0
+      )
+      .map((player) => ({
+        ...player,
+        isHost: player.seat === HOST_SEAT,
+        joinedAt: finiteInteger(
+          player.joinedAt,
+          state.createdAt ?? Date.now(),
+          0,
+          Number.MAX_SAFE_INTEGER
+        ),
+        ready: player.ready === true,
+        droppedAt:
+          player.droppedAt === undefined
+            ? undefined
+            : finiteInteger(
+                player.droppedAt,
+                state.createdAt ?? Date.now(),
+                0,
+                Number.MAX_SAFE_INTEGER
+              ),
+        progress: sanitizeProgress(player.progress, passageLength),
+        finishedAt:
+          player.finishedAt === undefined
+            ? undefined
+            : finiteInteger(
+                player.finishedAt,
+                state.createdAt ?? Date.now(),
+                0,
+                Number.MAX_SAFE_INTEGER
+              ),
+      }));
     return state as InternalState;
   }
 
@@ -206,7 +293,7 @@ function migrateStoredState(raw: unknown): InternalState | null {
       sessionToken: legacy._hostSessionToken,
       joinedAt: legacy.createdAt ?? Date.now(),
       ready: false,
-      progress: legacy._hostProgress ?? zeroProgress(),
+      progress: sanitizeProgress(legacy._hostProgress, passageLength),
       finishedAt: legacy._hostFinishedAt,
     });
   }
@@ -217,7 +304,7 @@ function migrateStoredState(raw: unknown): InternalState | null {
       sessionToken: legacy._guestSessionToken,
       joinedAt: legacy.createdAt ?? Date.now(),
       ready: false,
-      progress: legacy._guestProgress ?? zeroProgress(),
+      progress: sanitizeProgress(legacy._guestProgress, passageLength),
       finishedAt: legacy._guestFinishedAt,
     });
   }
@@ -281,8 +368,9 @@ export class Room extends DurableObject<Env> {
       _players: [],
       _source: body.source,
     };
+    const initializedState = this.state;
     await this.persistState();
-    await this.trackRoomCreated(this.state);
+    await this.trackRoomCreated(initializedState);
     await this.upsertActiveRoom("created");
     await this.rescheduleAlarm();
     return Response.json({ ok: true });
@@ -293,23 +381,24 @@ export class Room extends DurableObject<Env> {
     const client = pair[0];
     const server = pair[1];
 
-    if (!this.state) {
-      server.accept();
-      this.safeSend(server, {
-        t: "error",
-        code: "room_not_found",
-        message: "room not found or expired",
-      });
-      server.close(ROOM_TERMINAL_CODE, "room_not_found");
-      return new Response(null, { status: 101, webSocket: client });
-    }
+    const stateAtUpgrade = this.state;
+    if (!stateAtUpgrade) return this.roomNotFoundUpgrade(server, client);
+
+    const roomId = stateAtUpgrade.roomId;
+    const roomSource = stateAtUpgrade._source;
 
     const url = new URL(request.url);
     const providedToken = url.searchParams.get("token");
     const analyticsContext = await analyticsContextFromRequest(this.env, request, {
-      path: `/room/${this.state.roomId}`,
-      source: this.state._source,
+      path: `/room/${roomId}`,
+      source: roomSource,
     });
+
+    // An alarm may expire an empty room while request analytics is awaiting
+    // crypto. Re-check before resolving or attaching the socket.
+    if (!this.state || this.state.roomId !== roomId) {
+      return this.roomNotFoundUpgrade(server, client);
+    }
 
     const resolved = this.resolveConnection(providedToken);
 
@@ -339,23 +428,34 @@ export class Room extends DurableObject<Env> {
         spectatorCount: this.countSpectatorSockets(),
         _expiresAt: undefined,
       };
+      const joinedState = this.state;
       await this.persistState();
       await this.upsertActiveRoom("spectator_joined");
       await this.trackSpectatorJoin(
-        this.state.roomId,
+        roomId,
         joinedAt,
-        this.state.spectatorCount
+        joinedState.spectatorCount
       );
       await safeInsertAnalyticsEvent(this.env, analyticsContext, {
         eventName: "spectator_joined",
-        roomId: this.state.roomId,
+        roomId,
         participantKind: "spectator",
         metadata: {
-          spectatorCount: this.state.spectatorCount,
-          status: this.state.status,
+          spectatorCount: joinedState.spectatorCount,
+          status: joinedState.status,
         },
       });
       await this.rescheduleAlarm();
+
+      if (!this.state || this.state.roomId !== roomId) {
+        this.safeSend(server, {
+          t: "error",
+          code: "room_not_found",
+          message: "room not found or expired",
+        });
+        server.close(ROOM_TERMINAL_CODE, "room_not_found");
+        return new Response(null, { status: 101, webSocket: client });
+      }
 
       this.safeSend(server, { t: "spectator_welcome" });
       this.safeSend(server, { t: "state", room: this.toPublic() });
@@ -391,11 +491,14 @@ export class Room extends DurableObject<Env> {
     } satisfies PlayerAttachment);
     this.ctx.acceptWebSocket(server);
 
-    const isHost = isNewSeat ? this.state._players.length === 0 : seat === HOST_SEAT;
+    const stateBeforeJoin = this.state;
+    const isHost = isNewSeat
+      ? stateBeforeJoin._players.length === 0
+      : seat === HOST_SEAT;
 
     const players = isNewSeat
       ? [
-          ...this.state._players,
+          ...stateBeforeJoin._players,
           {
             seat,
             isHost,
@@ -406,12 +509,12 @@ export class Room extends DurableObject<Env> {
           } satisfies PlayerInternal,
         ].sort((a, b) => a.seat - b.seat)
       : // Returning racer: clear the held-seat marker, keep their progress.
-        this.state._players.map((p) =>
+        stateBeforeJoin._players.map((p) =>
           p.seat === seat ? { ...p, droppedAt: undefined } : p
         );
 
     this.state = {
-      ...this.state,
+      ...stateBeforeJoin,
       _players: players,
       spectatorCount: this.countSpectatorSockets(),
       _expiresAt: undefined,
@@ -434,27 +537,38 @@ export class Room extends DurableObject<Env> {
         ),
       };
     }
+    const joinedState = this.state;
 
     await this.persistState();
     await this.upsertActiveRoom("player_joined");
-    await this.trackSeatJoin(this.state.roomId, seat, isNewSeat);
+    await this.trackSeatJoin(roomId, seat, isNewSeat);
     await safeInsertAnalyticsEvent(this.env, analyticsContext, {
       eventName: "player_joined",
-      roomId: this.state.roomId,
+      roomId,
       participantKind: "player",
       playerRole: seatLabel(seat),
       metadata: {
         firstJoinForSeat: isNewSeat,
         seat,
         playerCount: players.length,
-        maxPlayers: this.state.config.maxPlayers,
-        status: this.state.status,
+        maxPlayers: joinedState.config.maxPlayers,
+        status: joinedState.status,
       },
     });
     if (entersReadyCheck) {
-      await this.trackReadyCheckStarted(this.state.roomId, Date.now());
+      await this.trackReadyCheckStarted(roomId, Date.now());
     }
     await this.rescheduleAlarm();
+
+    if (!this.state || this.state.roomId !== roomId) {
+      this.safeSend(server, {
+        t: "error",
+        code: "room_not_found",
+        message: "room not found or expired",
+      });
+      server.close(ROOM_TERMINAL_CODE, "room_not_found");
+      return new Response(null, { status: 101, webSocket: client });
+    }
 
     this.safeSend(server, { t: "welcome", seat, isHost, sessionToken });
     this.safeSend(server, { t: "state", room: this.toPublic() });
@@ -462,6 +576,20 @@ export class Room extends DurableObject<Env> {
     this.sendProgressSnapshot(server, seat);
     this.broadcastExcept(server, { t: "state", room: this.toPublic() });
 
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private roomNotFoundUpgrade(
+    server: WebSocket,
+    client: WebSocket
+  ): Response {
+    server.accept();
+    this.safeSend(server, {
+      t: "error",
+      code: "room_not_found",
+      message: "room not found or expired",
+    });
+    server.close(ROOM_TERMINAL_CODE, "room_not_found");
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -521,14 +649,28 @@ export class Room extends DurableObject<Env> {
     ws: WebSocket,
     message: string | ArrayBuffer
   ): Promise<void> {
-    if (typeof message !== "string") return;
-
-    let msg: ClientMsg;
-    try {
-      msg = JSON.parse(message);
-    } catch {
+    if (typeof message !== "string") {
+      try {
+        ws.close(INVALID_MESSAGE_CODE, "binary_messages_not_supported");
+      } catch {
+        // already closed
+      }
       return;
     }
+
+    const decoded = decodeClientMessage(
+      message,
+      this.state?.passage.text.length ?? 0
+    );
+    if (!decoded.ok) {
+      try {
+        ws.close(decoded.code, decoded.reason);
+      } catch {
+        // already closed
+      }
+      return;
+    }
+    const msg: ClientMsg = decoded.message;
 
     switch (msg.t) {
       case "ping":
@@ -564,7 +706,7 @@ export class Room extends DurableObject<Env> {
           await this.beginCountdown();
         } else {
           await this.persistState();
-          this.broadcast({ t: "state", room: this.toPublic() });
+          this.broadcastCurrentState();
         }
         return;
       }
@@ -690,14 +832,14 @@ export class Room extends DurableObject<Env> {
             await this.persistState();
             await this.upsertActiveRoom("finish_grace_started");
             await this.rescheduleAlarm();
-            this.broadcast({ t: "state", room: this.toPublic() });
+            this.broadcastCurrentState();
           } else {
             await this.persistState();
-            this.broadcast({ t: "state", room: this.toPublic() });
+            this.broadcastCurrentState();
           }
         } else {
           await this.persistState();
-          this.broadcast({ t: "state", room: this.toPublic() });
+          this.broadcastCurrentState();
         }
         return;
       }
@@ -726,7 +868,7 @@ export class Room extends DurableObject<Env> {
         } else {
           await this.persistState();
           await this.upsertActiveRoom("rematch_requested");
-          this.broadcast({ t: "state", room: this.toPublic() });
+          this.broadcastCurrentState();
         }
         return;
       }
@@ -744,7 +886,7 @@ export class Room extends DurableObject<Env> {
         };
         await this.persistState();
         await this.upsertActiveRoom("rematch_cancelled");
-        this.broadcast({ t: "state", room: this.toPublic() });
+        this.broadcastCurrentState();
         return;
       }
 
@@ -832,10 +974,7 @@ export class Room extends DurableObject<Env> {
         }
       );
       await this.rescheduleAlarm();
-      this.broadcastExcept(closing, {
-        t: "state",
-        room: this.toPublic(closing),
-      });
+      this.broadcastCurrentState(closing);
       return;
     }
 
@@ -927,10 +1066,7 @@ export class Room extends DurableObject<Env> {
     }
 
     await this.rescheduleAlarm();
-    this.broadcastExcept(closing, {
-      t: "state",
-      room: this.toPublic(closing),
-    });
+    this.broadcastCurrentState(closing);
   }
 
   /* -------------------- alarm orchestration -------------------- */
@@ -1053,7 +1189,7 @@ export class Room extends DurableObject<Env> {
         };
         await this.persistState();
         await this.rescheduleAlarm();
-        this.broadcast({ t: "state", room: this.toPublic() });
+        this.broadcastCurrentState();
       }
       return;
     }
@@ -1080,26 +1216,27 @@ export class Room extends DurableObject<Env> {
         next.endAt = startAt + this.state.config.timeLimit * 1000;
       }
       this.state = next;
+      const racingState = next;
       await this.persistState();
       await this.upsertActiveRoom("race_started");
-      await this.trackRaceStarted(this.state.roomId, startAt);
+      await this.trackRaceStarted(racingState.roomId, startAt);
       await safeInsertAnalyticsEvent(
         this.env,
         this.withRoomAnalyticsDefaults(),
         {
           eventName: "race_started",
           eventAt: startAt,
-          roomId: this.state.roomId,
+          roomId: racingState.roomId,
           metadata: {
-            endMode: this.state.config.endMode,
-            passageLength: this.state.config.passageLength,
-            timeLimit: this.state.config.timeLimit,
-            maxPlayers: this.state.config.maxPlayers,
-            playerCount: this.state._players.length,
+            endMode: racingState.config.endMode,
+            passageLength: racingState.config.passageLength,
+            timeLimit: racingState.config.timeLimit,
+            maxPlayers: racingState.config.maxPlayers,
+            playerCount: racingState._players.length,
           },
         }
       );
-      this.broadcast({ t: "state", room: this.toPublic() });
+      this.broadcastCurrentState();
       await this.rescheduleAlarm();
       return;
     }
@@ -1149,7 +1286,10 @@ export class Room extends DurableObject<Env> {
     if (this.state.status === "ended") return;
 
     const connected = this.connectedSeats(excludeSocket);
-    const result = computeResult(this.state, reason, connected);
+    const result = normalizeRaceResult(
+      computeResult(this.state, reason, connected),
+      this.state.passage.text.length
+    );
     const snapshotForDb = this.state;
     const endedAt = Date.now();
     this.state = {
@@ -1182,14 +1322,7 @@ export class Room extends DurableObject<Env> {
       }
     );
     await this.rescheduleAlarm();
-    if (excludeSocket) {
-      this.broadcastExcept(excludeSocket, {
-        t: "state",
-        room: this.toPublic(excludeSocket),
-      });
-    } else {
-      this.broadcast({ t: "state", room: this.toPublic() });
-    }
+    this.broadcastCurrentState(excludeSocket);
   }
 
   private async recordRaceEnd(
@@ -1300,7 +1433,7 @@ export class Room extends DurableObject<Env> {
     await this.persistState();
     await this.upsertActiveRoom("countdown_started");
     await this.rescheduleAlarm();
-    this.broadcast({ t: "state", room: this.toPublic() });
+    this.broadcastCurrentState();
   }
 
   private async startRematch(): Promise<void> {
@@ -1336,7 +1469,7 @@ export class Room extends DurableObject<Env> {
     await this.persistState();
     await this.upsertActiveRoom("rematch_started");
     await this.rescheduleAlarm();
-    this.broadcast({ t: "state", room: this.toPublic() });
+    this.broadcastCurrentState();
   }
 
   /* -------------------- state shaping -------------------- */
@@ -1397,6 +1530,16 @@ export class Room extends DurableObject<Env> {
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === except) continue;
       this.safeSend(ws, msg);
+    }
+  }
+
+  private broadcastCurrentState(except?: WebSocket): void {
+    if (!this.state) return;
+    const msg: ServerMsg = { t: "state", room: this.toPublic(except) };
+    if (except) {
+      this.broadcastExcept(except, msg);
+    } else {
+      this.broadcast(msg);
     }
   }
 
@@ -1740,6 +1883,42 @@ function computeResult(
       : players[0].seat;
 
   return { endReason, players, winnerSeat };
+}
+
+function normalizeRaceResult(
+  result: RaceResult,
+  passageLength: number
+): RaceResult {
+  const players = result.players.map((player, index) => ({
+    seat: finiteInteger(player.seat, index, 0, 3),
+    wpm: finiteInteger(player.wpm, 0, 0, 1_000_000),
+    accuracy:
+      Math.round(finiteNumber(player.accuracy, 0, 0, 100) * 10) / 10,
+    elapsedMs: finiteInteger(
+      player.elapsedMs,
+      0,
+      0,
+      Number.MAX_SAFE_INTEGER
+    ),
+    pos: finiteInteger(player.pos, 0, 0, passageLength),
+    correctCount: finiteInteger(
+      player.correctCount,
+      0,
+      0,
+      passageLength
+    ),
+    finishedPassage: player.finishedPassage === true,
+    place: finiteInteger(player.place, index + 1, 1, 4),
+    dnf: player.dnf === true,
+  }));
+  const winnerSeat =
+    typeof result.winnerSeat === "number" &&
+    Number.isInteger(result.winnerSeat) &&
+    players.some((player) => player.seat === result.winnerSeat)
+      ? result.winnerSeat
+      : null;
+
+  return { endReason: result.endReason, players, winnerSeat };
 }
 
 interface ComparablePlayer {

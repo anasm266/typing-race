@@ -33,6 +33,8 @@ export function connectRoom(roomId, token) {
   const ws = new WebSocket(url);
   const messages = [];
   const waiters = [];
+  let closeEvent = null;
+  const closeWaiters = [];
 
   ws.addEventListener("message", (event) => {
     const msg = JSON.parse(event.data);
@@ -46,6 +48,8 @@ export function connectRoom(roomId, token) {
   });
 
   ws.addEventListener("close", (event) => {
+    closeEvent = event;
+    for (const resolve of closeWaiters.splice(0)) resolve(event);
     for (const waiter of [...waiters]) {
       waiters.splice(waiters.indexOf(waiter), 1);
       waiter.reject(
@@ -85,6 +89,19 @@ export function connectRoom(roomId, token) {
     latestState: () =>
       [...messages].reverse().find((msg) => msg.t === "state")?.room,
     send: (msg) => ws.send(JSON.stringify(msg)),
+    waitForClose: (timeoutMs = TIMEOUT_MS) => {
+      if (closeEvent) return Promise.resolve(closeEvent);
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("timed out waiting for socket close")),
+          timeoutMs
+        );
+        closeWaiters.push((event) => {
+          clearTimeout(timeout);
+          resolve(event);
+        });
+      });
+    },
     close: () => ws.close(),
   };
 }

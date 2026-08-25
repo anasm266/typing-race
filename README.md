@@ -146,15 +146,15 @@ npm run build:web
 npm run deploy:web
 ```
 
-When D1 schema changes, apply the migration from the `worker` package:
+When D1 schema changes, apply every pending migration through Wrangler's
+migration ledger rather than running individual SQL files:
 
 ```bash
-cd worker
-wrangler d1 execute typing-race-db --file=migrations/0001_races.sql --remote
-wrangler d1 execute typing-race-db --file=migrations/0002_room_analytics.sql --remote
-wrangler d1 execute typing-race-db --file=migrations/0003_room_analytics_source.sql --remote
-wrangler d1 execute typing-race-db --file=migrations/0004_spectator_analytics.sql --remote
+npm run migrate:worker:remote
 ```
+
+`npm run dev:worker` applies pending local migrations automatically. The
+separate load-test database is updated with `npm run migrate:worker:k6`.
 
 ## Load testing
 

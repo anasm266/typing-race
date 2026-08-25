@@ -161,10 +161,9 @@ export function RaceView({
       t: "progress",
       pos: typed.length,
       correctCount: correctChars,
-      wpm,
       accuracy: selfAccuracy,
     });
-  }, [typed.length, racing, typingState, correctChars, wpm, selfAccuracy, send]);
+  }, [typed.length, racing, typingState, correctChars, selfAccuracy, send]);
 
   // Mirror progress locally so a dropped connection can resume mid-passage.
   useEffect(() => {
@@ -184,12 +183,10 @@ export function RaceView({
     finishedSentRef.current = true;
     send({
       t: "finished",
-      wpm,
       accuracy: selfAccuracy,
-      elapsedMs,
       correctCount: correctChars,
     });
-  }, [typingState, wpm, selfAccuracy, elapsedMs, correctChars, send]);
+  }, [typingState, selfAccuracy, correctChars, send]);
 
   useEffect(() => {
     finishedSentRef.current = false;
